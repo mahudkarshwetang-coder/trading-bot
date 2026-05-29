@@ -1,0 +1,55 @@
+import os
+
+from dotenv import load_dotenv
+from supabase import create_client, Client
+
+load_dotenv()
+
+
+def env_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_int(name, default):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def env_float(name, default):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+IBKR_HOST = os.getenv("IBKR_HOST", "127.0.0.1")
+IBKR_PORT = env_int("IBKR_PORT", 7497)
+IBKR_CLIENT_ID = env_int("IBKR_CLIENT_ID", 10)
+
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:7b")
+
+DRY_RUN = env_bool("DRY_RUN", True)
+MAX_DRAWDOWN_PCT = env_float("MAX_DRAWDOWN_PCT", 2.0)
+SIGNAL_COOLDOWN_MINUTES = env_int("SIGNAL_COOLDOWN_MINUTES", 30)
+MASSIVE_API_KEY = os.getenv("MASSIVE_API_KEY")
+
+
+def get_supabase_client() -> Client:
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise RuntimeError("Missing SUPABASE_URL or SUPABASE_KEY in .env.")
+    return create_client(SUPABASE_URL, SUPABASE_KEY)

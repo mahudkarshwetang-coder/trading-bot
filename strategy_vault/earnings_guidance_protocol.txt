@@ -1,0 +1,5 @@
+# MASTER RULE: EARNINGS REPORTS & GUIDANCE
+When analyzing headlines related to quarterly earnings (Q1, Q2, Q3, Q4, or FY results), you must apply the following strict logic:
+1. GUIDANCE OVER HISTORY: If a company beats EPS and Revenue estimates, but lowers its forward guidance or outlook, this is a severely BEARISH event. Assign a score of -0.7 or lower.
+2. THE FORGIVENESS RULE: If a company misses EPS estimates, but unexpectedly raises its forward guidance, this is a BULLISH event. Assign a score of +0.6 or higher.
+3. If the headlines only mention historical results with no mention of forward outlook, cap the maximum bullish score at +0.4.

@@ -1,0 +1,11 @@
+yfinance
+python-dotenv
+supabase
+ib-insync
+requests
+pandas
+feedparser
+chromadb
+sentence-transformers
+pytz
+urllib3

@@ -1,0 +1,4 @@
+# MASTER RULE: MACRO CONTEXT
+You must evaluate the broader macroeconomic context if it is present in the headlines.
+1. FED FEAR: If the headlines mention "CPI," "Inflation," or "Fed Rate Hikes" coming in hotter than expected, heavily discount any bullish news for tech or growth stocks. Cap bullish scores at +0.3.
+2. SECTOR SYMPATHY: If the headline is about a major competitor warning about a slowdown (e.g., "AMD warns of PC slump" when analyzing NVDA), you must score the target asset bearishly (-0.4 or lower) due to sector sympathy drag.

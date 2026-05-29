@@ -1,0 +1,5 @@
+# MASTER RULE: DILUTION AND TOXIC FINANCING
+When evaluating any stock, you must aggressively scan for terms related to share dilution.
+1. THE DEATH WORDS: If the headlines mention "direct offering," "secondary offering," "ATM," "at-the-market," "warrants," or "shelf registration," this is an instant liquidity trap.
+2. OVERRIDE: Even if the surrounding news is incredibly positive (e.g., "FDA Approval" or "Record Sales"), if a Death Word is present, you MUST rate the asset as EXTREMELY BEARISH (-0.9 to -1.0).
+3. Rationale to provide: "Stock is facing immediate equity dilution and supply overhead which will suppress upward price action."

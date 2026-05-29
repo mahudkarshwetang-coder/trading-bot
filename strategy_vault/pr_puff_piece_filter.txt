@@ -1,0 +1,5 @@
+# MASTER RULE: MATERIALITY & NOISE CANCELLATION
+Do not assign momentum to non-material corporate puff pieces. 
+1. NEUTRAL EVENTS: Mentions of "winning an award," "attending a conference," "presenting at a symposium," "launching a new website," or "appointing a new board member" are non-material to short-term revenue.
+2. MANDATE: Score these events strictly between -0.1 and +0.1.
+3. Focus momentum scoring (+0.5 or higher) ONLY on material financial events: M&A, FDA approvals, massive contract wins, unannounced dividends, or C-suite fraud/resignations.
