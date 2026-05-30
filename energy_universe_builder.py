@@ -2,7 +2,7 @@ import argparse
 import math
 import time
 from datetime import datetime, timezone
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import yfinance as yf
@@ -156,6 +156,8 @@ def fetch_yahoo_info(ticker: str) -> Optional[Dict[str, object]]:
     except Exception as exc:
         print(f"   ⚠️ {ticker}: Yahoo lookup failed: {exc}")
         return None
+    finally:
+        time.sleep(YAHOO_DELAY_SECONDS)
 
 
 def infer_exchange(info: Dict[str, object]) -> Optional[str]:
@@ -284,7 +286,6 @@ def build_energy_universe(limit: int, min_score: float, dry_run: bool) -> List[D
             f"   ✅ {ticker:<6} {exchange:<6} {classification['energy_theme']:<22} "
             f"score={classification['energy_purity_score']:<5} {record['company_name']}"
         )
-        time.sleep(YAHOO_DELAY_SECONDS)
 
     records.sort(key=lambda row: (row["energy_purity_score"], row["ticker"]), reverse=True)
     print(f"🏁 Scan complete: {len(records)} energy-related tickers found from {scanned} scanned.")
