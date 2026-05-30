@@ -11,6 +11,7 @@ from config import (
     IBKR_HOST,
     IBKR_PORT,
     MASSIVE_API_KEY,
+    MASSIVE_PREV_CLOSE_ENABLED,
     SIGNAL_CONTEXT_LIMIT,
     get_supabase_client,
 )
@@ -28,6 +29,8 @@ Fix:
   2. Run the SQL in supabase/signal_context.sql from this repo.
   3. Re-run: python context_enrichment.py
 """
+
+MASSIVE_RATE_LIMITED = False
 
 
 def utc_now_iso():
@@ -114,12 +117,18 @@ def get_pending_or_approved_signals(supabase, limit):
 
 
 def fetch_massive_prev_close(ticker):
-    if not MASSIVE_API_KEY:
+    global MASSIVE_RATE_LIMITED
+
+    if not MASSIVE_PREV_CLOSE_ENABLED or not MASSIVE_API_KEY or MASSIVE_RATE_LIMITED:
         return {}
 
     url = f"https://api.massive.com/v2/aggs/ticker/{ticker}/prev"
     try:
         response = requests.get(url, params={"apiKey": MASSIVE_API_KEY}, timeout=8)
+        if response.status_code == 429:
+            MASSIVE_RATE_LIMITED = True
+            print("Massive rate limit hit; using Yahoo quote fallback for the rest of this run.")
+            return {}
         response.raise_for_status()
         payload = response.json()
         result = (payload.get("results") or [{}])[0]
@@ -164,7 +173,10 @@ def fetch_yfinance_quote(ticker):
         return {"source": "unavailable"}
 
 
-def fetch_quote(ticker):
+def fetch_quote(ticker, quote_cache):
+    if ticker in quote_cache:
+        return quote_cache[ticker]
+
     yahoo = fetch_yfinance_quote(ticker)
     massive = fetch_massive_prev_close(ticker)
 
@@ -176,7 +188,7 @@ def fetch_quote(ticker):
     if bid is not None and ask is not None and ask >= bid:
         spread = ask - bid
 
-    return {
+    quote = {
         "quote_price": yahoo.get("price") or prev_close,
         "quote_bid": bid,
         "quote_ask": ask,
@@ -186,6 +198,8 @@ def fetch_quote(ticker):
         "quote_source": massive.get("source") or yahoo.get("source"),
         "quote_at": utc_now_iso(),
     }
+    quote_cache[ticker] = quote
+    return quote
 
 
 def fetch_sec_ticker_map():
@@ -206,10 +220,14 @@ def fetch_sec_ticker_map():
         return {}
 
 
-def fetch_sec_context(ticker, ticker_map):
+def fetch_sec_context(ticker, ticker_map, sec_cache):
+    ticker = ticker.upper()
+    if ticker in sec_cache:
+        return sec_cache[ticker]
+
     cik = ticker_map.get(ticker.upper())
     if not cik:
-        return {
+        context = {
             "latest_filing_type": None,
             "latest_filing_date": None,
             "latest_filing_title": None,
@@ -218,6 +236,8 @@ def fetch_sec_context(ticker, ticker_map):
             "sec_risk_score": 0.15,
             "catalyst_summary": "No SEC filing context available.",
         }
+        sec_cache[ticker] = context
+        return context
 
     try:
         response = requests.get(
@@ -268,7 +288,7 @@ def fetch_sec_context(ticker, ticker_map):
                 risk_flags.append("Recent insider transaction")
                 risk_score += 0.12
 
-        return {
+        context = {
             "latest_filing_type": latest["type"] if latest else None,
             "latest_filing_date": latest["date"] if latest else None,
             "latest_filing_title": latest["title"] if latest else None,
@@ -280,9 +300,11 @@ def fetch_sec_context(ticker, ticker_map):
                 if latest else "No recent watched SEC filing found."
             ),
         }
+        sec_cache[ticker] = context
+        return context
     except Exception as exc:
         print(f"SEC context skipped for {ticker}: {exc}")
-        return {
+        context = {
             "latest_filing_type": None,
             "latest_filing_date": None,
             "latest_filing_title": None,
@@ -291,6 +313,8 @@ def fetch_sec_context(ticker, ticker_map):
             "sec_risk_score": 0.2,
             "catalyst_summary": "SEC filing context could not be refreshed.",
         }
+        sec_cache[ticker] = context
+        return context
 
 
 def fetch_macro_context():
@@ -353,13 +377,13 @@ def context_score(signal, position, quote, sec_context, macro_context):
     return max(0.0, min(1.0, score))
 
 
-def build_context(signal, positions, ticker_map, macro_context):
+def build_context(signal, positions, ticker_map, macro_context, quote_cache, sec_cache):
     ticker = signal["ticker"].upper()
     position = positions.get(ticker, {"quantity": 0.0, "avg_cost": None})
     quantity = position.get("quantity") or 0.0
     action = signal.get("action_type")
-    quote = fetch_quote(ticker)
-    sec_context = fetch_sec_context(ticker, ticker_map)
+    quote = fetch_quote(ticker, quote_cache)
+    sec_context = fetch_sec_context(ticker, ticker_map, sec_cache)
     sell_allowed = action != "SELL" or quantity > 0
     no_short_reason = None
     if action == "SELL" and quantity <= 0:
@@ -395,11 +419,14 @@ def sync_context(limit=SIGNAL_CONTEXT_LIMIT, dry_run=False):
     ticker_map = fetch_sec_ticker_map()
     macro_context = fetch_macro_context()
     signals = get_pending_or_approved_signals(supabase, limit)
+    unique_tickers = {signal["ticker"].upper() for signal in signals}
+    quote_cache = {}
+    sec_cache = {}
 
-    print(f"Refreshing execution context for {len(signals)} signal(s).")
+    print(f"Refreshing execution context for {len(signals)} signal(s) across {len(unique_tickers)} ticker(s).")
     rows = []
     for signal in signals:
-        row = build_context(signal, positions, ticker_map, macro_context)
+        row = build_context(signal, positions, ticker_map, macro_context, quote_cache, sec_cache)
         rows.append(row)
         print(
             f"  {row['ticker']}: score={row['context_score']:.2f} "

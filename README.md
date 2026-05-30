@@ -94,7 +94,7 @@ Or double-click:
 context_enrichment_run.bat
 ```
 
-This script is best-effort. It uses IBKR for current held quantity/no-short validation, Massive/Yahoo for quote context, SEC EDGAR for filing risk, and SPY/QQQ/VIX for a lightweight macro regime. If one source is unavailable, the rest of the context still syncs.
+This script is best-effort. It uses IBKR for current held quantity/no-short validation, Massive/Yahoo for quote context, SEC EDGAR for filing risk, and SPY/QQQ/VIX for a lightweight macro regime. If one source is unavailable, the rest of the context still syncs. To reduce free-plan API noise, repeated tickers are cached inside each run and Massive is skipped for the rest of the run after a rate-limit response. Set `MASSIVE_PREV_CLOSE_ENABLED=false` to rely on Yahoo quotes only.
 
 ## Analytics Event History
 
