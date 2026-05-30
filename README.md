@@ -67,6 +67,12 @@ During market hours, `master_scanner.py` runs the intraday scanner pulse every `
 - Any matching ticker/action/channel signal created inside `SIGNAL_COOLDOWN_MINUTES`.
 - LLM and sentiment signals whose headline context has not changed.
 
+## No-Short Safety
+
+This bot is configured as long-only by default. When auto-execute is enabled, LLM `BUY` signals can be routed for execution, but LLM `SELL` signals remain pending for manual review.
+
+The execution bridge also performs a final IBKR position check before routing any approved `SELL`. If IBKR does not report a positive long position for that ticker, the signal is marked `blocked_no_position` and no order is sent.
+
 ## Analytics Event History
 
 The iPad Metrics tab can read execution outcome events from Supabase. Run this SQL once to enable that table:

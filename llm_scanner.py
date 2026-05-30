@@ -126,6 +126,11 @@ def calculate_technicals(ticker):
         print(f"⚠️ Technical Matrix Failure for {ticker}: {e}")
         return None, None, None, None, None, None
 
+def status_for_signal(action, is_autonomous):
+    if is_autonomous and action == "BUY":
+        return "approved"
+    return "pending"
+
 def push_signal_to_ipad(ticker, action, score, reasoning, headlines, channel, target_status):
     confidence = abs(score)
     memo_bullets = "\n- ".join(headlines)
@@ -180,9 +185,8 @@ def run_llm_scan():
         min_confidence = config["min_confidence"]
         is_autonomous = config.get("auto_execute", config.get("autonomous_execution", False))
         
-        target_status = "approved" if is_autonomous else "pending"
         if is_autonomous:
-            print("⚠️ AUTONOMOUS MODE ENGAGED: Signals will bypass the pending queue.")
+            print("⚠️ AUTONOMOUS MODE ENGAGED: BUY signals can bypass review; SELL signals remain pending.")
             
         manual_list = config.get("watchlist", [])
         radar_list = config.get("radar_watchlist", [])
@@ -208,9 +212,27 @@ def run_llm_scan():
             score, reasoning = ask_local_analyst(ticker, headlines)
             
             if score >= min_confidence: 
-                push_signal_to_ipad(ticker, "BUY", score, reasoning, headlines, ticker_channels[ticker], target_status)
+                action = "BUY"
+                push_signal_to_ipad(
+                    ticker,
+                    action,
+                    score,
+                    reasoning,
+                    headlines,
+                    ticker_channels[ticker],
+                    status_for_signal(action, is_autonomous),
+                )
             elif score <= -min_confidence:
-                push_signal_to_ipad(ticker, "SELL", score, reasoning, headlines, ticker_channels[ticker], target_status)
+                action = "SELL"
+                push_signal_to_ipad(
+                    ticker,
+                    action,
+                    score,
+                    reasoning,
+                    headlines,
+                    ticker_channels[ticker],
+                    status_for_signal(action, is_autonomous),
+                )
             else:
                 print(f"   ↳ State: Neutral Market Subtext. Skipping.")
             time.sleep(1.5)

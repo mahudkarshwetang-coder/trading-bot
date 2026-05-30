@@ -26,6 +26,7 @@ ib = IB()
 account_pnl = None
 SYSTEM_HALTED = False
 TRADE_EVENTS_SETUP_WARNED = False
+NO_SHORT_SELL_STATUS = "blocked_no_position"
 
 def utc_now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -67,6 +68,25 @@ def record_trade_event(signal, event_type, status=None, price=None, quantity=Non
                 TRADE_EVENTS_SETUP_WARNED = True
             return
         print(f"⚠️ Trade event write skipped for {payload['ticker']}: {exc}")
+
+def current_position_quantity(ticker):
+    """Return current IBKR position quantity for a symbol, or 0 if not held."""
+    normalized = str(ticker or "").upper()
+    try:
+        total = 0.0
+        for item in ib.positions():
+            if item.contract.symbol.upper() == normalized:
+                total += float(item.position)
+        return total
+    except Exception as exc:
+        print(f"⚠️ Position lookup failed for {ticker}: {exc}")
+        return 0.0
+
+def can_route_sell(ticker):
+    quantity = current_position_quantity(ticker)
+    if quantity > 0:
+        return True, quantity
+    return False, quantity
 
 def connect_to_broker():
     """Attempts connection to the local running IBKR TWS instance."""
@@ -198,6 +218,12 @@ def route_bracket_order(ticker, action):
     """Generates a 3-Leg Marketable Bracket Order: Entry (Padded LMT) + Stop Loss + Take Profit."""
     print(f"📦 Generating Bracket Order block for {ticker}...")
     
+    if action == "SELL":
+        allowed, held_quantity = can_route_sell(ticker)
+        if not allowed:
+            print(f"🛡️ NO-SHORT SAFETY: Refusing SELL {ticker}; current long position is {held_quantity}.")
+            return False, 0.0, False, None
+    
     contract = Stock(ticker, 'SMART', 'USD')
     ib.qualifyContracts(contract)
     
@@ -318,6 +344,19 @@ def listen_for_commands():
                     ticker, action, signal_id = signal["ticker"], signal["action_type"], signal["id"]
                     
                     print(f"\n🔔 ROUTING APPROVED SIGNAL: {ticker} ({action})")
+                    if action == "SELL":
+                        allowed, held_quantity = can_route_sell(ticker)
+                        if not allowed:
+                            supabase.table("market_signals").update({"status": NO_SHORT_SELL_STATUS}).eq("id", signal_id).execute()
+                            record_trade_event(
+                                signal,
+                                "blocked_no_position",
+                                status=NO_SHORT_SELL_STATUS,
+                                quantity=held_quantity,
+                                note="SELL blocked because no positive long IBKR position exists.",
+                            )
+                            print(f"🛡️ NO-SHORT SAFETY: {ticker} SELL blocked; no long position available.")
+                            continue
                     
                     success, fill_price, live_order_sent, quantity = route_bracket_order(ticker, action)
                     if success:
