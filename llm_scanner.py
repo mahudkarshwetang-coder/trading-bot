@@ -178,7 +178,7 @@ def run_llm_scan():
             return
             
         min_confidence = config["min_confidence"]
-        is_autonomous = config.get("autonomous_execution", False)
+        is_autonomous = config.get("auto_execute", config.get("autonomous_execution", False))
         
         target_status = "approved" if is_autonomous else "pending"
         if is_autonomous:

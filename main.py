@@ -285,7 +285,7 @@ def listen_for_commands():
                     continue
                 
                 # The "Semi-Autonomous" Logic
-                is_auto = settings.get("autonomous_execution", False)
+                is_auto = settings.get("auto_execute", settings.get("autonomous_execution", False))
                 if is_auto:
                     pending_resp = supabase.table("market_signals").select("*").eq("status", "pending").execute()
                     if pending_resp.data:
@@ -306,6 +306,9 @@ def listen_for_commands():
                 if settings.get("force_earnings"):
                     subprocess.run(["python", "earnings_radar.py"])
                     supabase.table("bot_settings").update({"force_earnings": False}).eq("id", 1).execute()
+                if settings.get("force_scanner"):
+                    subprocess.run(["python", "llm_scanner.py"])
+                    supabase.table("bot_settings").update({"force_scanner": False}).eq("id", 1).execute()
 
             # 3. --- TRADE EXECUTION LISTENER ---
             # This catches BOTH auto-approved BUYs and manually approved SELLs from the iPad
