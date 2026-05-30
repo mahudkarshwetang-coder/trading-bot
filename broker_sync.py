@@ -14,6 +14,18 @@ from config import (
     get_supabase_client,
 )
 
+BROKER_POSITIONS_SETUP_MESSAGE = """
+Supabase is missing the public.broker_positions table.
+
+Fix:
+  1. Open Supabase Dashboard -> SQL Editor.
+  2. Run the SQL in supabase/broker_positions.sql from this repo.
+  3. Re-run: python broker_sync.py
+
+Tip:
+  python broker_sync.py --dry-run only checks IBKR and does not require the table.
+"""
+
 
 def utc_now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -29,6 +41,18 @@ def clean_float(value):
     if math.isnan(number) or math.isinf(number):
         return None
     return number
+
+
+def is_missing_broker_positions_table(exc):
+    message = str(exc)
+    return (
+        "broker_positions" in message
+        and (
+            "PGRST205" in message
+            or "schema cache" in message
+            or "Could not find the table" in message
+        )
+    )
 
 
 def connect_to_ibkr():
@@ -208,8 +232,13 @@ def sync_once(ib, supabase, mark_signals=False, dry_run=False):
         print("DRY RUN: Supabase was not updated.")
         return
 
-    upsert_open_positions(supabase, snapshots)
-    closed_rows = mark_missing_positions_closed(supabase, snapshots)
+    try:
+        upsert_open_positions(supabase, snapshots)
+        closed_rows = mark_missing_positions_closed(supabase, snapshots)
+    except Exception as exc:
+        if is_missing_broker_positions_table(exc):
+            raise RuntimeError(BROKER_POSITIONS_SETUP_MESSAGE) from exc
+        raise
 
     if closed_rows:
         print(f"Marked {len(closed_rows)} stale broker position(s) closed.")
@@ -258,12 +287,18 @@ def main():
 
     try:
         while True:
-            sync_once(
-                ib,
-                supabase,
-                mark_signals=args.mark_missing_signals,
-                dry_run=args.dry_run,
-            )
+            try:
+                sync_once(
+                    ib,
+                    supabase,
+                    mark_signals=args.mark_missing_signals,
+                    dry_run=args.dry_run,
+                )
+            except RuntimeError as exc:
+                if "public.broker_positions" in str(exc):
+                    print(exc)
+                    raise SystemExit(2) from None
+                raise
 
             if not args.loop:
                 break
