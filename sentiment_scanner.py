@@ -66,7 +66,12 @@ def push_signal_to_ipad(ticker, action, score, headlines):
     }
     
     try:
-        if insert_signal_with_cooldown(supabase, payload, channel="SENTIMENT"):
+        if insert_signal_with_cooldown(
+            supabase,
+            payload,
+            channel="SENTIMENT",
+            context_fragments=headlines,
+        ):
             print(f"📡 SIGNAL TRANSMITTED: {action} {ticker} sent to iPad Dashboard.")
     except Exception as e:
         print(f"🚨 Supabase Upload Error: {e}")

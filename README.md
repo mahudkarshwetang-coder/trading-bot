@@ -38,9 +38,12 @@ BROKER_SYNC_INTERVAL_SECONDS=30
 BROKER_SYNC_MARK_MISSING_SIGNALS=false
 OLLAMA_URL=http://localhost:11434/api/generate
 OLLAMA_MODEL=qwen2.5-coder:7b
-SIGNAL_COOLDOWN_MINUTES=30
+SCANNER_INTERVAL_SECONDS=600
+SIGNAL_COOLDOWN_MINUTES=240
 MASSIVE_API_KEY=your_massive_api_key
 ```
+
+`SCANNER_INTERVAL_SECONDS` controls the market-hours recommendation loop. The default is 600 seconds, or 10 minutes. `SIGNAL_COOLDOWN_MINUTES` defaults to 240 minutes, or 4 hours, so repeated ticker/action/channel ideas do not keep refilling the iPad queue.
 
 ## Main Scripts
 
@@ -54,6 +57,15 @@ MASSIVE_API_KEY=your_massive_api_key
 - `llm_scanner.py`: creates LLM/RAG-informed signals from headlines and strategy rules.
 - `main.py`: IBKR/Supabase execution bridge.
 - `broker_sync.py`: reads live IBKR paper positions and syncs them to Supabase for the iPad Ledger.
+
+## Recommendation Noise Control
+
+During market hours, `master_scanner.py` runs the intraday scanner pulse every `SCANNER_INTERVAL_SECONDS`. Duplicate suppression blocks:
+
+- Any matching ticker/action/channel signal that is still `pending`.
+- Any matching ticker/action/channel signal that is already `approved`.
+- Any matching ticker/action/channel signal created inside `SIGNAL_COOLDOWN_MINUTES`.
+- LLM and sentiment signals whose headline context has not changed.
 
 ## Analytics Event History
 

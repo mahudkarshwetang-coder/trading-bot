@@ -149,7 +149,12 @@ def push_signal_to_ipad(ticker, action, score, reasoning, headlines, channel, ta
     }
     
     try:
-        if insert_signal_with_cooldown(supabase, payload, channel=channel):
+        if insert_signal_with_cooldown(
+            supabase,
+            payload,
+            channel=channel,
+            context_fragments=headlines,
+        ):
             routing_msg = "AWAITING MANUAL REVIEW" if target_status == "pending" else "ROUTED DIRECTLY TO BROKER"
             print(f"📡 SIGNAL TRANSMITTED via [{channel}]: {action} {ticker} | {routing_msg}")
     except Exception as e:
@@ -190,11 +195,6 @@ def run_llm_scan():
         
         combined_watchlist = list(ticker_channels.keys())
         
-        # Keep your test drill
-        if 'AAPL' not in combined_watchlist:
-            combined_watchlist.insert(0, 'AAPL')
-            ticker_channels['AAPL'] = "VAULT"
-            
         print(f"✅ Target Pool Synced: {len(combined_watchlist)} Tickers loaded.")
         print("-" * 50)
         

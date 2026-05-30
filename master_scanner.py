@@ -4,6 +4,8 @@ from datetime import datetime
 
 import pytz
 
+from config import SCANNER_INTERVAL_SECONDS
+
 EST = pytz.timezone("US/Eastern")
 
 
@@ -131,8 +133,9 @@ def master_engine():
 
         elif is_market_open(now):
             run_intraday_pulse()
-            print(f"\n[{now.strftime('%I:%M %p')}] Loop complete. Cooling down for 2 minutes.")
-            time.sleep(120)
+            cooldown_minutes = max(1, SCANNER_INTERVAL_SECONDS // 60)
+            print(f"\n[{now.strftime('%I:%M %p')}] Loop complete. Cooling down for {cooldown_minutes} minutes.")
+            time.sleep(max(60, SCANNER_INTERVAL_SECONDS))
 
         else:
             if now.hour >= 16 and pre_market_done:
