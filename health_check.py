@@ -147,6 +147,12 @@ def check_supabase(report):
 
         signals = supabase.table("market_signals").select("id,status,ticker").limit(1).execute()
         report.ok("Supabase market_signals", f"{len(signals.data or [])} sample row(s)")
+        
+        try:
+            events = supabase.table("trade_events").select("id,ticker,event_type").limit(1).execute()
+            report.ok("Supabase trade_events", f"{len(events.data or [])} sample row(s)")
+        except Exception:
+            report.warn("Supabase trade_events", "missing; run supabase/trade_events.sql for outcome analytics")
     except Exception as exc:
         report.fail("Supabase", str(exc))
 

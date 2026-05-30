@@ -55,6 +55,16 @@ MASSIVE_API_KEY=your_massive_api_key
 - `main.py`: IBKR/Supabase execution bridge.
 - `broker_sync.py`: reads live IBKR paper positions and syncs them to Supabase for the iPad Ledger.
 
+## Analytics Event History
+
+The iPad Metrics tab can read execution outcome events from Supabase. Run this SQL once to enable that table:
+
+```sql
+-- supabase/trade_events.sql
+```
+
+After the table exists, `main.py` will write best-effort events when approved signals are routed, dry-run, or fail routing. If the table is not installed yet, execution still continues and the Metrics tab falls back to signal and broker-position analytics.
+
 ## Broker Position Sync
 
 The iPad Ledger should use IBKR as the source of truth for active positions. Run this SQL once in Supabase before enabling the sync:

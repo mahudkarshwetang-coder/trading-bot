@@ -2,6 +2,7 @@ import time
 import subprocess
 import math
 import yfinance as yf
+from datetime import datetime, timezone
 from ib_insync import IB, Stock
 
 from config import (
@@ -24,6 +25,48 @@ ib = IB()
 # Global variable to hold our PnL subscription
 account_pnl = None
 SYSTEM_HALTED = False
+TRADE_EVENTS_SETUP_WARNED = False
+
+def utc_now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+def is_missing_trade_events_table(exc):
+    message = str(exc)
+    return (
+        "trade_events" in message
+        and (
+            "PGRST205" in message
+            or "schema cache" in message
+            or "Could not find the table" in message
+        )
+    )
+
+def record_trade_event(signal, event_type, status=None, price=None, quantity=None, note=None):
+    """Best-effort analytics write. Missing table should never stop execution routing."""
+    global TRADE_EVENTS_SETUP_WARNED
+
+    payload = {
+        "signal_id": signal.get("id"),
+        "ticker": signal.get("ticker"),
+        "action_type": signal.get("action_type"),
+        "event_type": event_type,
+        "status": status,
+        "quantity": quantity,
+        "price": price,
+        "source": "execution_bridge",
+        "note": note,
+        "occurred_at": utc_now_iso(),
+    }
+
+    try:
+        supabase.table("trade_events").insert(payload).execute()
+    except Exception as exc:
+        if is_missing_trade_events_table(exc):
+            if not TRADE_EVENTS_SETUP_WARNED:
+                print("⚠️ trade_events table missing; run supabase/trade_events.sql to enable outcome analytics.")
+                TRADE_EVENTS_SETUP_WARNED = True
+            return
+        print(f"⚠️ Trade event write skipped for {payload['ticker']}: {exc}")
 
 def connect_to_broker():
     """Attempts connection to the local running IBKR TWS instance."""
@@ -161,7 +204,7 @@ def route_bracket_order(ticker, action):
     current_price = get_current_price(contract)
     if current_price == 0.0:
         print(f"🚨 Aborting Trade: Zero price data available for {ticker}.")
-        return False, 0.0, False
+        return False, 0.0, False, None
         
     actual_baseline = round(current_price, 2)
     
@@ -198,16 +241,16 @@ def route_bracket_order(ticker, action):
     
     if DRY_RUN:
         print(f"DRY RUN: Prepared {action} {quantity} {ticker}; order was not sent to IBKR.")
-        return True, actual_baseline, False
+        return True, actual_baseline, False, quantity
 
     try:
         for order in bracket:
             ib.placeOrder(contract, order)
         print(f"🚀 BRACKET DEPLOYED: {action} {quantity} {ticker} with full risk management.")
-        return True, actual_baseline, True
+        return True, actual_baseline, True, quantity
     except Exception as e:
         print(f"🚨 Exchange Routing Failure for {ticker}: {e}")
-        return False, 0.0, False
+        return False, 0.0, False, quantity
 
 def listen_for_commands():
     """Polls Supabase for trade approvals, autonomous rules, and circuit breakers."""
@@ -273,13 +316,27 @@ def listen_for_commands():
                     
                     print(f"\n🔔 ROUTING APPROVED SIGNAL: {ticker} ({action})")
                     
-                    success, fill_price, live_order_sent = route_bracket_order(ticker, action)
+                    success, fill_price, live_order_sent, quantity = route_bracket_order(ticker, action)
                     if success:
                         next_status = "executed" if live_order_sent else "dry_run"
                         supabase.table("market_signals").update({"status": next_status, "execution_price": fill_price}).eq("id", signal_id).execute()
+                        record_trade_event(
+                            signal,
+                            "order_sent" if live_order_sent else "dry_run",
+                            status=next_status,
+                            price=fill_price,
+                            quantity=quantity,
+                        )
                         print(f"Cloud State Updated: {ticker} marked {next_status} at ${fill_price}.")
                     else:
                         supabase.table("market_signals").update({"status": "failed"}).eq("id", signal_id).execute()
+                        record_trade_event(
+                            signal,
+                            "routing_failed",
+                            status="failed",
+                            price=fill_price if fill_price else None,
+                            quantity=quantity,
+                        )
                         print(f"❌ Loop Defused: {ticker} routing aborted.")
 
         except Exception as e:
