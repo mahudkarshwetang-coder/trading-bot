@@ -55,6 +55,7 @@ MASSIVE_API_KEY=your_massive_api_key
 - `tech_scanner.py`: creates RSI-based pending signals.
 - `sentiment_scanner.py`: creates simple lexicon-based pending signals.
 - `llm_scanner.py`: creates LLM/RAG-informed signals from headlines and strategy rules.
+- `context_enrichment.py`: enriches pending/approved signals with IBKR position, quote, SEC filing, and macro context for the iPad Execution Terminal.
 - `main.py`: IBKR/Supabase execution bridge.
 - `broker_sync.py`: reads live IBKR paper positions and syncs them to Supabase for the iPad Ledger.
 
@@ -72,6 +73,28 @@ During market hours, `master_scanner.py` runs the intraday scanner pulse every `
 This bot is configured as long-only by default. When auto-execute is enabled, LLM `BUY` signals can be routed for execution, but LLM `SELL` signals remain pending for manual review.
 
 The execution bridge also performs a final IBKR position check before routing any approved `SELL`. If IBKR does not report a positive long position for that ticker, the signal is marked `blocked_no_position` and no order is sent.
+
+## Execution Context Enrichment
+
+The iPad Execution Terminal can show a richer decision context beside each pending signal. Run this SQL once in Supabase:
+
+```sql
+-- supabase/signal_context.sql
+```
+
+Then refresh context from the Windows PC:
+
+```powershell
+python context_enrichment.py
+```
+
+Or double-click:
+
+```powershell
+context_enrichment_run.bat
+```
+
+This script is best-effort. It uses IBKR for current held quantity/no-short validation, Massive/Yahoo for quote context, SEC EDGAR for filing risk, and SPY/QQQ/VIX for a lightweight macro regime. If one source is unavailable, the rest of the context still syncs.
 
 ## Analytics Event History
 

@@ -334,6 +334,7 @@ def listen_for_commands():
                     supabase.table("bot_settings").update({"force_earnings": False}).eq("id", 1).execute()
                 if settings.get("force_scanner"):
                     subprocess.run(["python", "llm_scanner.py"])
+                    subprocess.run(["python", "context_enrichment.py"])
                     supabase.table("bot_settings").update({"force_scanner": False}).eq("id", 1).execute()
 
             # 3. --- TRADE EXECUTION LISTENER ---

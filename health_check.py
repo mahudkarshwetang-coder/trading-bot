@@ -154,6 +154,12 @@ def check_supabase(report):
             report.ok("Supabase trade_events", f"{len(events.data or [])} sample row(s)")
         except Exception:
             report.warn("Supabase trade_events", "missing; run supabase/trade_events.sql for outcome analytics")
+        
+        try:
+            context = supabase.table("signal_context").select("id,ticker,context_score").limit(1).execute()
+            report.ok("Supabase signal_context", f"{len(context.data or [])} sample row(s)")
+        except Exception:
+            report.warn("Supabase signal_context", "missing; run supabase/signal_context.sql for execution-terminal context")
     except Exception as exc:
         report.fail("Supabase", str(exc))
 
