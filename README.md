@@ -50,6 +50,7 @@ MASSIVE_API_KEY=your_massive_api_key
 - `master_scanner.py`: single scanner gateway and market-hours orchestrator.
 - `macro_scanner.py`: writes daily sector context into `strategy_vault`.
 - `fundamental_scanner.py`: creates the daily target list and updates Supabase watchlist.
+- `energy_universe_builder.py`: builds a broad NYSE/Nasdaq energy stock universe for traditional, clean, transition, and futuristic energy themes.
 - `radar.py`: updates the volatility watchlist from Yahoo trending symbols.
 - `earnings_radar.py`: updates the earnings watchlist from Yahoo's calendar.
 - `tech_scanner.py`: creates RSI-based pending signals.
@@ -58,6 +59,39 @@ MASSIVE_API_KEY=your_massive_api_key
 - `context_enrichment.py`: enriches pending/approved signals with IBKR position, quote, SEC filing, and macro context for the iPad Execution Terminal.
 - `main.py`: IBKR/Supabase execution bridge.
 - `broker_sync.py`: reads live IBKR paper positions and syncs them to Supabase for the iPad Ledger.
+
+## Energy Universe Tracking
+
+The energy universe layer tracks a broad NYSE/Nasdaq stock set across traditional energy, electric utilities, renewable power, solar, wind, nuclear/uranium, hydrogen/fuel cells, battery storage, EV charging, grid/electrification, carbon capture, and critical minerals.
+
+This is intentionally broader than the official Energy sector because many clean-energy and energy-transition companies are classified as Utilities, Industrials, Technology, or Basic Materials.
+
+Run this SQL once in Supabase:
+
+```sql
+-- supabase/energy_universe.sql
+```
+
+Then run a local dry run:
+
+```powershell
+python energy_universe_builder.py --dry-run --limit 250
+```
+
+If the dry run looks reasonable, write matches to Supabase:
+
+```powershell
+python energy_universe_builder.py --limit 1000
+```
+
+Useful options:
+
+```powershell
+python energy_universe_builder.py --limit 2000 --min-score 70
+python energy_universe_builder.py --dry-run --limit 500 --min-score 60
+```
+
+The builder writes to `public.energy_universe` and does not create market signals or route orders. It is a universe/classification layer only. Scanner integration happens in a later phase.
 
 ## Recommendation Noise Control
 
