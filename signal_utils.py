@@ -110,5 +110,11 @@ def insert_signal_with_cooldown(
         print(f"Skipping duplicate {action} signal for {ticker}; cooldown is {minutes} minutes.")
         return False
 
-    supabase.table("market_signals").insert(payload).execute()
+    response = supabase.table("market_signals").insert(payload).execute()
+    try:
+        from signal_journal import record_signal
+
+        record_signal(payload, response)
+    except Exception as exc:
+        print(f"Signal journal write failed for {ticker}: {exc}")
     return True

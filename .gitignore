@@ -19,6 +19,7 @@ env/
 # Local generated data
 chroma_db/
 daily_targets.txt
+data/
 logs/
 *.log
 
@@ -27,4 +28,3 @@ logs/
 Thumbs.db
 .vscode/
 .idea/
-

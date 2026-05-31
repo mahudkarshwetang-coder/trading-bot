@@ -57,6 +57,7 @@ MASSIVE_API_KEY=your_massive_api_key
 - `sentiment_scanner.py`: creates simple lexicon-based pending signals.
 - `llm_scanner.py`: creates LLM/RAG-informed signals from headlines and strategy rules.
 - `context_enrichment.py`: enriches pending/approved signals with IBKR position, quote, SEC filing, and macro context for the iPad Execution Terminal.
+- `signal_journal.py`: tracks accepted scanner signals and scores forward returns for training.
 - `main.py`: IBKR/Supabase execution bridge.
 - `broker_sync.py`: reads live IBKR paper positions and syncs them to Supabase for the iPad Ledger.
 
@@ -101,6 +102,43 @@ During market hours, `master_scanner.py` runs the intraday scanner pulse every `
 - Any matching ticker/action/channel signal that is already `approved`.
 - Any matching ticker/action/channel signal created inside `SIGNAL_COOLDOWN_MINUTES`.
 - LLM and sentiment signals whose headline context has not changed.
+
+## Signal Journal
+
+Accepted scanner signals are recorded locally in `data/signal_journal.csv` through `signal_utils.py`. This journal is ignored by Git because it is training/runtime data.
+
+Run this SQL once in Supabase to make journal analytics available to the iPad Metrics tab:
+
+```sql
+-- supabase/signal_journal.sql
+```
+
+The journal tracks:
+
+- Signal metadata: ticker, action, channel, confidence, status, timestamp.
+- Context fields when available: signal price, RSI, SMA, RVOL, bid, ask, memo excerpt.
+- Forward outcomes: 15 minutes, 1 hour, 1 day, and 5 days.
+
+Update forward returns after signals have aged:
+
+```powershell
+python signal_journal.py update
+```
+
+Sync the local journal to Supabase without recalculating outcomes:
+
+```powershell
+python signal_journal.py sync
+```
+
+Summarize performance by scanner channel:
+
+```powershell
+python signal_journal.py summary --horizon 1h
+python signal_journal.py summary --horizon 1d
+```
+
+This measures signal quality only. It does not require iPad auto-execution, does not connect to IBKR, and does not place orders.
 
 ## No-Short Safety
 
