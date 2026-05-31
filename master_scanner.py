@@ -21,6 +21,12 @@ def run_fundamental():
     run_fundamental_scan()
 
 
+def run_energy_targets():
+    from energy_target_scanner import run_energy_target_scan
+
+    run_energy_target_scan()
+
+
 def run_earnings():
     from earnings_radar import run_earnings_scan
 
@@ -54,6 +60,7 @@ def run_llm():
 SCANNERS = {
     "macro": run_macro,
     "fundamental": run_fundamental,
+    "energy": run_energy_targets,
     "earnings": run_earnings,
     "radar": run_radar,
     "sentiment": run_sentiment,
@@ -63,7 +70,9 @@ SCANNERS = {
 
 PHASES = {
     "premarket": ["macro", "fundamental", "earnings"],
+    "energy_premarket": ["macro", "energy", "earnings"],
     "intraday": ["radar", "sentiment", "technical", "llm"],
+    "energy_full": ["macro", "energy", "earnings", "radar", "sentiment", "technical", "llm"],
     "full": ["macro", "fundamental", "earnings", "radar", "sentiment", "technical", "llm"],
 }
 
