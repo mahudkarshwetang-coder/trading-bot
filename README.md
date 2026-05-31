@@ -242,6 +242,48 @@ Run scanner passes:
 python master_scanner.py intraday
 ```
 
+Run the full training support cycle:
+
+```powershell
+python master_scanner.py training-cycle
+```
+
+This runs:
+
+```text
+intraday scanners
+context enrichment
+broker position sync
+signal journal update/sync
+```
+
+Run a full daily cycle:
+
+```powershell
+python master_scanner.py daily-cycle
+```
+
+This runs:
+
+```text
+health preflight
+premarket scanners
+intraday scanners
+context enrichment
+broker position sync
+signal journal update/sync
+```
+
+Support jobs can also be run through the master:
+
+```powershell
+python master_scanner.py preflight
+python master_scanner.py context
+python master_scanner.py broker-sync
+python master_scanner.py journal
+python master_scanner.py energy-universe --dry-run
+```
+
 Run the execution bridge in training mode:
 
 ```powershell

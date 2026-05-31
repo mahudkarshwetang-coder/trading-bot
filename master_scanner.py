@@ -4,7 +4,11 @@ from datetime import datetime
 
 import pytz
 
-from config import SCANNER_INTERVAL_SECONDS
+from config import (
+    BROKER_SYNC_MARK_MISSING_SIGNALS,
+    ENERGY_MIN_SCORE,
+    SCANNER_INTERVAL_SECONDS,
+)
 
 EST = pytz.timezone("US/Eastern")
 
@@ -57,6 +61,60 @@ def run_llm():
     run_llm_scan()
 
 
+def run_preflight():
+    from health_check import main as health_main
+
+    try:
+        health_main()
+    except SystemExit as exc:
+        return int(exc.code or 0) == 0
+    return True
+
+
+def run_context(dry_run=False):
+    from context_enrichment import sync_context
+
+    sync_context(dry_run=dry_run)
+    return True
+
+
+def run_broker_snapshot(dry_run=False, mark_missing_signals=BROKER_SYNC_MARK_MISSING_SIGNALS):
+    from broker_sync import connect_to_ibkr, sync_once
+    from config import get_supabase_client
+
+    supabase = get_supabase_client()
+    ib = connect_to_ibkr()
+    try:
+        sync_once(
+            ib,
+            supabase,
+            mark_signals=mark_missing_signals,
+            dry_run=dry_run,
+        )
+    finally:
+        ib.disconnect()
+    return True
+
+
+def run_journal():
+    from signal_journal import sync_journal, update_outcomes
+
+    update_outcomes()
+    sync_journal()
+    return True
+
+
+def run_energy_universe(dry_run=False):
+    from energy_universe_builder import DEFAULT_LIMIT, build_energy_universe
+
+    build_energy_universe(
+        limit=DEFAULT_LIMIT,
+        min_score=ENERGY_MIN_SCORE,
+        dry_run=dry_run,
+    )
+    return True
+
+
 SCANNERS = {
     "macro": run_macro,
     "fundamental": run_fundamental,
@@ -74,6 +132,20 @@ PHASES = {
     "intraday": ["radar", "sentiment", "technical", "llm"],
     "energy_full": ["macro", "energy", "earnings", "radar", "sentiment", "technical", "llm"],
     "full": ["macro", "fundamental", "earnings", "radar", "sentiment", "technical", "llm"],
+}
+
+OPERATIONS = {
+    "preflight": run_preflight,
+    "context": run_context,
+    "broker-sync": run_broker_snapshot,
+    "journal": run_journal,
+    "energy-universe": run_energy_universe,
+}
+
+WORKFLOWS = {
+    "training-cycle": ["intraday", "context", "broker-sync", "journal"],
+    "daily-cycle": ["preflight", "premarket", "intraday", "context", "broker-sync", "journal"],
+    "energy-cycle": ["preflight", "energy_premarket", "intraday", "context", "broker-sync", "journal"],
 }
 
 
@@ -115,6 +187,65 @@ def run_phase(phase):
     return True
 
 
+def run_operation(name, dry_run=False, mark_missing_signals=BROKER_SYNC_MARK_MISSING_SIGNALS):
+    print(f"\n[ALPHA ENGINE] Running operation: {name}")
+    try:
+        if name in {"context", "energy-universe"}:
+            result = OPERATIONS[name](dry_run=dry_run)
+        elif name == "broker-sync":
+            result = OPERATIONS[name](
+                dry_run=dry_run,
+                mark_missing_signals=mark_missing_signals,
+            )
+        else:
+            result = OPERATIONS[name]()
+    except Exception as exc:
+        print(f"[ALPHA ENGINE] Operation failed: {name}: {exc}")
+        return False
+
+    if result is False:
+        print(f"[ALPHA ENGINE] Operation returned failure: {name}")
+        return False
+
+    print(f"[ALPHA ENGINE] Operation complete: {name}")
+    return True
+
+
+def run_target(target, dry_run=False, mark_missing_signals=BROKER_SYNC_MARK_MISSING_SIGNALS):
+    if target in PHASES:
+        return run_phase(target)
+    if target in SCANNERS:
+        return run_scanner(target)
+    if target in OPERATIONS:
+        return run_operation(target, dry_run=dry_run, mark_missing_signals=mark_missing_signals)
+    if target in WORKFLOWS:
+        return run_workflow(target, dry_run=dry_run, mark_missing_signals=mark_missing_signals)
+    raise ValueError(f"Unknown target: {target}")
+
+
+def run_workflow(name, dry_run=False, mark_missing_signals=BROKER_SYNC_MARK_MISSING_SIGNALS):
+    print(f"\n[ALPHA ENGINE] Running workflow: {name}")
+    failures = 0
+    for target in WORKFLOWS[name]:
+        success = run_target(
+            target,
+            dry_run=dry_run,
+            mark_missing_signals=mark_missing_signals,
+        )
+        if not success:
+            failures += 1
+            if target == "preflight":
+                print("[ALPHA ENGINE] Preflight failed; stopping workflow.")
+                break
+
+    if failures:
+        print(f"[ALPHA ENGINE] Workflow {name} completed with {failures} failure(s).")
+        return False
+
+    print(f"[ALPHA ENGINE] Workflow {name} completed successfully.")
+    return True
+
+
 def run_pre_market_sweep():
     """Runs once before the market opens to establish the daily baseline."""
     return run_phase("premarket")
@@ -123,6 +254,11 @@ def run_pre_market_sweep():
 def run_intraday_pulse():
     """Runs during market hours to catch live price action."""
     return run_phase("intraday")
+
+
+def run_intraday_training_cycle():
+    """Runs scanner pulse plus supporting training jobs."""
+    return run_workflow("training-cycle")
 
 
 def master_engine():
@@ -141,7 +277,7 @@ def master_engine():
                 time.sleep(60)
 
         elif is_market_open(now):
-            run_intraday_pulse()
+            run_intraday_training_cycle()
             cooldown_minutes = max(1, SCANNER_INTERVAL_SECONDS // 60)
             print(f"\n[{now.strftime('%I:%M %p')}] Loop complete. Cooling down for {cooldown_minutes} minutes.")
             time.sleep(max(60, SCANNER_INTERVAL_SECONDS))
@@ -156,7 +292,7 @@ def master_engine():
 
 
 def parse_args():
-    choices = ["engine", *PHASES.keys(), *SCANNERS.keys()]
+    choices = ["engine", *PHASES.keys(), *SCANNERS.keys(), *OPERATIONS.keys(), *WORKFLOWS.keys()]
     parser = argparse.ArgumentParser(description="Master scanner orchestrator.")
     parser.add_argument(
         "target",
@@ -165,6 +301,17 @@ def parse_args():
         choices=choices,
         help="Run the full scheduler, a phase, or a single scanner.",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Use dry-run mode for support operations that can write to Supabase.",
+    )
+    parser.add_argument(
+        "--mark-missing-signals",
+        action="store_true",
+        default=BROKER_SYNC_MARK_MISSING_SIGNALS,
+        help="Let broker-sync mark executed signals missing from IBKR as closed_external.",
+    )
     return parser.parse_args()
 
 
@@ -172,11 +319,12 @@ def main():
     args = parse_args()
     if args.target == "engine":
         master_engine()
-    elif args.target in PHASES:
-        success = run_phase(args.target)
-        raise SystemExit(0 if success else 1)
     else:
-        success = run_scanner(args.target)
+        success = run_target(
+            args.target,
+            dry_run=args.dry_run,
+            mark_missing_signals=args.mark_missing_signals,
+        )
         raise SystemExit(0 if success else 1)
 
 
