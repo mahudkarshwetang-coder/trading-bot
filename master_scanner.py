@@ -5,6 +5,7 @@ from config import (
     BROKER_SYNC_MARK_MISSING_SIGNALS,
     ENERGY_MIN_SCORE,
     SCAN_EXTENDED_HOURS,
+    SCAN_GLOBAL_OVERNIGHT,
     SCANNER_INTERVAL_SECONDS,
 )
 from market_session import get_market_session, now_market_time
@@ -274,7 +275,11 @@ def master_engine():
                 print(f"\n[{now.strftime('%I:%M %p')}] Premarket loop complete. Cooling down for {cooldown_minutes} minutes.")
                 time.sleep(max(60, SCANNER_INTERVAL_SECONDS))
 
-        elif session.is_regular or (SCAN_EXTENDED_HOURS and session.is_extended):
+        elif (
+            session.is_regular
+            or (SCAN_EXTENDED_HOURS and session.is_extended)
+            or (SCAN_GLOBAL_OVERNIGHT and session.is_global_overnight)
+        ):
             print(f"[{now.strftime('%I:%M %p')}] Market session: {session.name}")
             run_intraday_training_cycle()
             cooldown_minutes = max(1, SCANNER_INTERVAL_SECONDS // 60)

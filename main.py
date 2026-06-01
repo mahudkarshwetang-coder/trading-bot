@@ -7,6 +7,7 @@ from ib_insync import IB, Stock
 
 from config import (
     ALLOW_EXTENDED_HOURS_TRADING,
+    ALLOW_GLOBAL_OVERNIGHT_TRADING,
     DRY_RUN,
     IBKR_CLIENT_ID,
     IBKR_HOST,
@@ -31,6 +32,7 @@ SYSTEM_HALTED = False
 TRADE_EVENTS_SETUP_WARNED = False
 NO_SHORT_SELL_STATUS = "blocked_no_position"
 EXTENDED_HOURS_BLOCK_STATUS = "blocked_extended_hours"
+GLOBAL_OVERNIGHT_BLOCK_STATUS = "blocked_global_overnight"
 
 def utc_now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -224,6 +226,9 @@ def route_bracket_order(ticker, action):
     """Generates a 3-Leg Marketable Bracket Order: Entry (Padded LMT) + Stop Loss + Take Profit."""
     print(f"📦 Generating Bracket Order block for {ticker}...")
     session = get_market_session()
+    if session.is_global_overnight and not DRY_RUN and not ALLOW_GLOBAL_OVERNIGHT_TRADING:
+        print(f"Global overnight live routing is disabled. Refusing {action} {ticker}.")
+        return False, 0.0, False, None
     if session.is_extended and not DRY_RUN and not ALLOW_EXTENDED_HOURS_TRADING:
         print(f"Extended-hours live routing is disabled. Refusing {action} {ticker} during {session.name}.")
         return False, 0.0, False, None
@@ -356,6 +361,17 @@ def listen_for_commands():
                     
                     print(f"\n🔔 ROUTING APPROVED SIGNAL: {ticker} ({action})")
                     session = get_market_session()
+                    if session.is_global_overnight and not DRY_RUN and not ALLOW_GLOBAL_OVERNIGHT_TRADING:
+                        supabase.table("market_signals").update({"status": GLOBAL_OVERNIGHT_BLOCK_STATUS}).eq("id", signal_id).execute()
+                        record_trade_event(
+                            signal,
+                            "blocked_global_overnight",
+                            status=GLOBAL_OVERNIGHT_BLOCK_STATUS,
+                            note="Live routing blocked during global_overnight; set ALLOW_GLOBAL_OVERNIGHT_TRADING=true to enable.",
+                        )
+                        print(f"Global overnight live routing blocked for {ticker}.")
+                        continue
+
                     if session.is_extended and not DRY_RUN and not ALLOW_EXTENDED_HOURS_TRADING:
                         supabase.table("market_signals").update({"status": EXTENDED_HOURS_BLOCK_STATUS}).eq("id", signal_id).execute()
                         record_trade_event(
@@ -413,6 +429,7 @@ if __name__ == "__main__":
     print("⚡ Starting Alpha Engine Order Routing Bridge [BRACKET MODE - ARMED]")
     print(f"Training Safety: DRY_RUN is {'ON' if DRY_RUN else 'OFF'}")
     print(f"Extended Hours Trading: {'ON' if ALLOW_EXTENDED_HOURS_TRADING else 'OFF'}")
+    print(f"Global Overnight Trading: {'ON' if ALLOW_GLOBAL_OVERNIGHT_TRADING else 'OFF'}")
     print("-" * 50)
     connect_to_broker()
     print("-" * 50)
