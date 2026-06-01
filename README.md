@@ -73,6 +73,14 @@ TECH_NEWS_OUTPUT_PATH=data/tech_news_feed.jsonl
 TECH_NEWS_LLM_ENABLED=true
 TECH_NEWS_LLM_MAX_ITEMS=20
 TECH_NEWS_LLM_TIMEOUT_SECONDS=90
+MARKET_BRIEFING_LOOKBACK_HOURS=12
+MARKET_BRIEFING_NEWS_LIMIT=30
+MARKET_BRIEFING_SIGNAL_LIMIT=30
+MARKET_BRIEFING_POSITION_LIMIT=20
+MARKET_BRIEFING_CATEGORY_LIMIT=10
+MARKET_BRIEFING_TIMEOUT_SECONDS=120
+MARKET_BRIEFING_OUTPUT_PATH=data/daily_market_briefings.jsonl
+MARKET_BRIEFING_PUSH_SUPABASE=true
 MASSIVE_API_KEY=your_massive_api_key
 ```
 
@@ -97,6 +105,7 @@ Live extended-hours order routing remains disabled unless both `DRY_RUN=false` a
 - `sentiment_scanner.py`: creates simple lexicon-based pending signals.
 - `llm_scanner.py`: creates LLM/RAG-informed signals from headlines and strategy rules.
 - `signal_quality_filter.py`: asks local Qwen to approve or block news/LLM signals before they enter Supabase.
+- `daily_market_briefing.py`: generates morning/evening Qwen briefings from category/news/signal/position/macro data.
 - `context_enrichment.py`: enriches pending/approved signals with IBKR position, quote, SEC filing, and macro context for the iPad Execution Terminal.
 - `signal_journal.py`: tracks accepted scanner signals and scores forward returns for training.
 - `main.py`: IBKR/Supabase execution bridge.
@@ -174,6 +183,55 @@ Run without local LLM analysis:
 
 ```powershell
 python tech_news_monitor.py --no-llm
+```
+
+## Daily Market Briefing
+
+`daily_market_briefing.py` creates a structured morning/evening briefing with local Qwen. It summarizes:
+
+- Category universe shifts (entrants/exits from the top category shortlist)
+- Recent tech news highlights from `data/tech_news_feed.jsonl`
+- Open signal queue (`pending` and `approved`)
+- Current broker positions from `broker_positions`
+- Macro context from `strategy_vault/00_daily_macro_state.txt`
+
+If Ollama is unavailable, the script falls back to a deterministic summary so the briefing pipeline still runs.
+
+Run this SQL once in Supabase for iPad sync:
+
+```sql
+-- supabase/daily_market_briefings.sql
+```
+
+Generate morning briefing and push to Supabase:
+
+```powershell
+python daily_market_briefing.py --session morning
+```
+
+Generate evening briefing:
+
+```powershell
+python daily_market_briefing.py --session evening
+```
+
+Auto session by local market time:
+
+```powershell
+python daily_market_briefing.py --session auto
+```
+
+Preview without Supabase write:
+
+```powershell
+python daily_market_briefing.py --session morning --dry-run
+```
+
+You can also run through master:
+
+```powershell
+python master_scanner.py briefing
+python master_scanner.py briefing --dry-run
 ```
 
 ## Energy Universe Tracking

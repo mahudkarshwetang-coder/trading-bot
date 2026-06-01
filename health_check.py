@@ -60,6 +60,14 @@ OPTIONAL_ENV = [
     "TECH_NEWS_LLM_ENABLED",
     "TECH_NEWS_LLM_MAX_ITEMS",
     "TECH_NEWS_LLM_TIMEOUT_SECONDS",
+    "MARKET_BRIEFING_LOOKBACK_HOURS",
+    "MARKET_BRIEFING_NEWS_LIMIT",
+    "MARKET_BRIEFING_SIGNAL_LIMIT",
+    "MARKET_BRIEFING_POSITION_LIMIT",
+    "MARKET_BRIEFING_CATEGORY_LIMIT",
+    "MARKET_BRIEFING_TIMEOUT_SECONDS",
+    "MARKET_BRIEFING_OUTPUT_PATH",
+    "MARKET_BRIEFING_PUSH_SUPABASE",
     "MASSIVE_API_KEY",
 ]
 
@@ -198,6 +206,12 @@ def check_supabase(report):
             report.ok("Supabase category_universe", f"{len(category_universe.data or [])} sample row(s)")
         except Exception:
             report.warn("Supabase category_universe", "missing; run supabase/category_universe.sql for dynamic category targets")
+
+        try:
+            briefings = supabase.table("daily_market_briefings").select("briefing_date,session_type").limit(1).execute()
+            report.ok("Supabase daily_market_briefings", f"{len(briefings.data or [])} sample row(s)")
+        except Exception:
+            report.warn("Supabase daily_market_briefings", "missing; run supabase/daily_market_briefings.sql for iPad briefings")
     except Exception as exc:
         report.fail("Supabase", str(exc))
 

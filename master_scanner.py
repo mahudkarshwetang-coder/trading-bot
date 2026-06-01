@@ -109,6 +109,12 @@ def run_journal():
     return True
 
 
+def run_briefing(dry_run=False):
+    from daily_market_briefing import run_daily_market_briefing
+
+    return run_daily_market_briefing(session="auto", dry_run=dry_run)
+
+
 def run_energy_universe(dry_run=False):
     from energy_universe_builder import DEFAULT_LIMIT, build_energy_universe
 
@@ -158,6 +164,7 @@ OPERATIONS = {
     "context": run_context,
     "broker-sync": run_broker_snapshot,
     "journal": run_journal,
+    "briefing": run_briefing,
     "energy-universe": run_energy_universe,
     "category-universe": run_category_universe,
 }
@@ -208,7 +215,7 @@ def run_phase(phase):
 def run_operation(name, dry_run=False, mark_missing_signals=BROKER_SYNC_MARK_MISSING_SIGNALS):
     print(f"\n[ALPHA ENGINE] Running operation: {name}")
     try:
-        if name in {"context", "energy-universe", "category-universe"}:
+        if name in {"context", "briefing", "energy-universe", "category-universe"}:
             result = OPERATIONS[name](dry_run=dry_run)
         elif name == "broker-sync":
             result = OPERATIONS[name](
