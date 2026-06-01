@@ -66,6 +66,9 @@ TECH_NEWS_INTERVAL_SECONDS=180
 TECH_NEWS_MAX_WORKERS=8
 TECH_NEWS_LIMIT_PER_TICKER=5
 TECH_NEWS_OUTPUT_PATH=data/tech_news_feed.jsonl
+TECH_NEWS_LLM_ENABLED=true
+TECH_NEWS_LLM_MAX_ITEMS=20
+TECH_NEWS_LLM_TIMEOUT_SECONDS=90
 MASSIVE_API_KEY=your_massive_api_key
 ```
 
@@ -142,6 +145,8 @@ python master_scanner.py premarket
 
 `tech_news_monitor.py` is a separate news-only process. It does not place orders or create trade signals. It watches a configurable tech-stock ticker list, prints fresh Yahoo Finance headlines, tags likely impact areas, deduplicates across scans, and appends new items to `data/tech_news_feed.jsonl`.
 
+When `TECH_NEWS_LLM_ENABLED=true`, fresh headline batches are also sent to the local Ollama model configured by `OLLAMA_URL` and `OLLAMA_MODEL`. The saved JSONL records include Qwen's conservative sentiment, impact score, urgency score, short summary, why-it-matters note, and suggested action (`watch`, `investigate`, or `alert`).
+
 Run one scan:
 
 ```powershell
@@ -158,6 +163,12 @@ Customize the list without editing code:
 
 ```powershell
 python tech_news_monitor.py --tickers NVDA,AMD,MSFT,AAPL,AVGO --interval 120
+```
+
+Run without local LLM analysis:
+
+```powershell
+python tech_news_monitor.py --no-llm
 ```
 
 ## Energy Universe Tracking
