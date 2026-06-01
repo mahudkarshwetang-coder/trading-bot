@@ -53,6 +53,10 @@ BROKER_SYNC_INTERVAL_SECONDS=30
 BROKER_SYNC_MARK_MISSING_SIGNALS=false
 OLLAMA_URL=http://localhost:11434/api/generate
 OLLAMA_MODEL=qwen2.5-coder:7b
+SIGNAL_QUALITY_FILTER_ENABLED=true
+SIGNAL_QUALITY_MIN_SCORE=65
+SIGNAL_QUALITY_TIMEOUT_SECONDS=90
+SIGNAL_QUALITY_FAIL_OPEN=true
 SCANNER_INTERVAL_SECONDS=600
 SIGNAL_COOLDOWN_MINUTES=240
 SIGNAL_JOURNAL_PATH=data/signal_journal.csv
@@ -92,6 +96,7 @@ Live extended-hours order routing remains disabled unless both `DRY_RUN=false` a
 - `tech_scanner.py`: creates RSI-based pending signals.
 - `sentiment_scanner.py`: creates simple lexicon-based pending signals.
 - `llm_scanner.py`: creates LLM/RAG-informed signals from headlines and strategy rules.
+- `signal_quality_filter.py`: asks local Qwen to approve or block news/LLM signals before they enter Supabase.
 - `context_enrichment.py`: enriches pending/approved signals with IBKR position, quote, SEC filing, and macro context for the iPad Execution Terminal.
 - `signal_journal.py`: tracks accepted scanner signals and scores forward returns for training.
 - `main.py`: IBKR/Supabase execution bridge.
@@ -212,6 +217,8 @@ During regular, configured extended, and configured global overnight market sess
 - Any matching ticker/action/channel signal that is already `approved`.
 - Any matching ticker/action/channel signal created inside `SIGNAL_COOLDOWN_MINUTES`.
 - LLM and sentiment signals whose headline context has not changed.
+
+Before `sentiment_scanner.py` or `llm_scanner.py` inserts a news-driven signal, `signal_quality_filter.py` asks local Qwen whether the catalyst is material, whether it may already be priced in, whether it is company-specific or broader, and whether the scanner confidence is justified. Signals below `SIGNAL_QUALITY_MIN_SCORE` are blocked before they reach the iPad queue. `SIGNAL_QUALITY_FAIL_OPEN=true` keeps scanners running if Ollama is temporarily unavailable; set it to `false` for stricter behavior.
 
 ## Signal Journal
 

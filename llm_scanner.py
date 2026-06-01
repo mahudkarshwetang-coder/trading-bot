@@ -9,6 +9,7 @@ import chromadb
 from chromadb.utils import embedding_functions
 
 from config import OLLAMA_MODEL, OLLAMA_URL, get_supabase_client
+from signal_quality_filter import review_signal_quality
 from signal_utils import insert_signal_with_cooldown
 
 # --- CONFIGURATION ---
@@ -154,6 +155,18 @@ def push_signal_to_ipad(ticker, action, score, reasoning, headlines, channel, ta
     }
     
     try:
+        approved, decision, payload = review_signal_quality(
+            payload,
+            headlines=headlines,
+            reasoning=reasoning,
+        )
+        if not approved:
+            print(
+                f"Qwen quality gate blocked {action} {ticker}: "
+                f"score={decision['quality_score']} reason={decision['rationale']}"
+            )
+            return
+
         if insert_signal_with_cooldown(
             supabase,
             payload,

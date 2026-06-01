@@ -1,6 +1,7 @@
 import time
 import feedparser
 from config import get_supabase_client
+from signal_quality_filter import review_signal_quality
 from signal_utils import insert_signal_with_cooldown
 
 # --- CONFIGURATION ---
@@ -94,6 +95,18 @@ def push_signal_to_ipad(ticker, action, score, headlines):
     }
     
     try:
+        approved, decision, payload = review_signal_quality(
+            payload,
+            headlines=headlines,
+            reasoning=f"Lexicon sentiment score: {score:.2f}",
+        )
+        if not approved:
+            print(
+                f"Qwen quality gate blocked {action} {ticker}: "
+                f"score={decision['quality_score']} reason={decision['rationale']}"
+            )
+            return
+
         if insert_signal_with_cooldown(
             supabase,
             payload,
