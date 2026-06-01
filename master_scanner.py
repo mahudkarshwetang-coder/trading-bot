@@ -33,7 +33,7 @@ def run_energy_targets():
 def run_category_targets():
     from category_target_scanner import run_category_target_scan
 
-    run_category_target_scan()
+    return bool(run_category_target_scan())
 
 
 def run_earnings():
@@ -179,7 +179,10 @@ def run_scanner(name):
     scanner = SCANNERS[name]
     print(f"\n--- Starting scanner: {name} ---")
     try:
-        scanner()
+        result = scanner()
+        if result is False:
+            print(f"--- Scanner returned failure: {name} ---")
+            return False
         print(f"--- Scanner complete: {name} ---")
         return True
     except Exception as exc:

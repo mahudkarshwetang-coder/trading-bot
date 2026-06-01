@@ -180,6 +180,12 @@ def check_supabase(report):
             report.ok("Supabase signal_context", f"{len(context.data or [])} sample row(s)")
         except Exception:
             report.warn("Supabase signal_context", "missing; run supabase/signal_context.sql for execution-terminal context")
+
+        try:
+            category_universe = supabase.table("category_universe").select("ticker,category").limit(1).execute()
+            report.ok("Supabase category_universe", f"{len(category_universe.data or [])} sample row(s)")
+        except Exception:
+            report.warn("Supabase category_universe", "missing; run supabase/category_universe.sql for dynamic category targets")
     except Exception as exc:
         report.fail("Supabase", str(exc))
 
