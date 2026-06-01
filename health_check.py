@@ -8,6 +8,7 @@ import requests
 
 from config import (
     DRY_RUN,
+    FIXED_ORDER_QUANTITY,
     IBKR_HOST,
     IBKR_PORT,
     OLLAMA_URL,
@@ -21,6 +22,7 @@ ROOT = Path(__file__).resolve().parent
 REQUIRED_ENV = ["SUPABASE_URL", "SUPABASE_KEY"]
 OPTIONAL_ENV = [
     "DRY_RUN",
+    "FIXED_ORDER_QUANTITY",
     "IBKR_HOST",
     "IBKR_PORT",
     "IBKR_CLIENT_ID",
@@ -108,6 +110,7 @@ def check_env(report):
         report.ok("optional env", "all configured")
 
     report.ok("DRY_RUN", "ON" if DRY_RUN else "OFF")
+    report.ok("FIXED_ORDER_QUANTITY", str(FIXED_ORDER_QUANTITY))
     if not DRY_RUN:
         report.warn("live trading mode", "DRY_RUN is false; main.py can place IBKR orders")
 

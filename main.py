@@ -9,6 +9,7 @@ from config import (
     ALLOW_EXTENDED_HOURS_TRADING,
     ALLOW_GLOBAL_OVERNIGHT_TRADING,
     DRY_RUN,
+    FIXED_ORDER_QUANTITY,
     IBKR_CLIENT_ID,
     IBKR_HOST,
     IBKR_PORT,
@@ -190,6 +191,10 @@ def get_current_price(contract):
 
 def calculate_dynamic_quantity(entry_price, stop_loss_price, risk_percentage=1.0):
     """Calculates exact share quantity based on account size and stop-loss distance."""
+    if FIXED_ORDER_QUANTITY > 0:
+        print(f"   ⚖️ Position Size Override | Fixed Qty: {FIXED_ORDER_QUANTITY}")
+        return FIXED_ORDER_QUANTITY
+
     try:
         account_summary = ib.accountSummary()
         net_liquidation = 0.0
@@ -226,6 +231,7 @@ def route_bracket_order(ticker, action):
     """Generates a 3-Leg Marketable Bracket Order: Entry (Padded LMT) + Stop Loss + Take Profit."""
     print(f"📦 Generating Bracket Order block for {ticker}...")
     session = get_market_session()
+    held_quantity = None
     if session.is_global_overnight and not DRY_RUN and not ALLOW_GLOBAL_OVERNIGHT_TRADING:
         print(f"Global overnight live routing is disabled. Refusing {action} {ticker}.")
         return False, 0.0, False, None
@@ -259,6 +265,12 @@ def route_bracket_order(ticker, action):
         stop_loss   = round(current_price * 1.02, 2)  
         
     quantity = calculate_dynamic_quantity(entry_price, stop_loss, risk_percentage=1.0)
+    if action == "SELL" and held_quantity is not None and held_quantity < quantity:
+        quantity = math.floor(held_quantity)
+        if quantity < 1:
+            print(f"🛡️ NO-SHORT SAFETY: Refusing SELL {ticker}; held quantity is below 1 share.")
+            return False, 0.0, False, None
+        print(f"   🛡️ SELL quantity reduced to held position: {quantity}")
         
     print(f"   ↳ Marketable Matrix | Entry LMT: ${entry_price:.2f} (True Baseline: ${actual_baseline:.2f})")
     print(f"   ↳ Risk Matrix calculated | TP: ${take_profit:.2f} | SL: ${stop_loss:.2f}")
@@ -428,6 +440,7 @@ def listen_for_commands():
 if __name__ == "__main__":
     print("⚡ Starting Alpha Engine Order Routing Bridge [BRACKET MODE - ARMED]")
     print(f"Training Safety: DRY_RUN is {'ON' if DRY_RUN else 'OFF'}")
+    print(f"Fixed Order Quantity: {FIXED_ORDER_QUANTITY if FIXED_ORDER_QUANTITY > 0 else 'dynamic sizing'}")
     print(f"Extended Hours Trading: {'ON' if ALLOW_EXTENDED_HOURS_TRADING else 'OFF'}")
     print(f"Global Overnight Trading: {'ON' if ALLOW_GLOBAL_OVERNIGHT_TRADING else 'OFF'}")
     print("-" * 50)

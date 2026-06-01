@@ -29,6 +29,7 @@ Optional:
 
 ```env
 DRY_RUN=true
+FIXED_ORDER_QUANTITY=100
 IBKR_HOST=127.0.0.1
 IBKR_PORT=7497
 IBKR_CLIENT_ID=10
@@ -67,7 +68,7 @@ MASSIVE_API_KEY=your_massive_api_key
 
 Extended-hours scanning is enabled by default with `SCAN_EXTENDED_HOURS=true`, covering `PREMARKET_OPEN` through `AFTER_HOURS_CLOSE` on weekdays. Global overnight scanning is also enabled by default with `SCAN_GLOBAL_OVERNIGHT=true`, covering `GLOBAL_OVERNIGHT_OPEN` through `GLOBAL_OVERNIGHT_CLOSE` Sunday night through Friday morning. This is intended for futures/FX/Asia-sensitive market movement and signal tracking.
 
-Live extended-hours order routing remains disabled unless both `DRY_RUN=false` and `ALLOW_EXTENDED_HOURS_TRADING=true` are set. Live global overnight routing is even more conservative and also requires `ALLOW_GLOBAL_OVERNIGHT_TRADING=true`. `STOP_OUTSIDE_RTH=false` keeps stop orders regular-hours only by default; be careful changing this because stop behavior can differ by order type and venue outside regular hours.
+Live extended-hours order routing remains disabled unless both `DRY_RUN=false` and `ALLOW_EXTENDED_HOURS_TRADING=true` are set. Live global overnight routing is even more conservative and also requires `ALLOW_GLOBAL_OVERNIGHT_TRADING=true`. `FIXED_ORDER_QUANTITY=100` keeps every routed order at 100 shares during training; set it to `0` later to return to dynamic sizing. `STOP_OUTSIDE_RTH=false` keeps stop orders regular-hours only by default; be careful changing this because stop behavior can differ by order type and venue outside regular hours.
 
 ## Main Scripts
 

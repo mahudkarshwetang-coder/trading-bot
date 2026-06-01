@@ -60,6 +60,7 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:7b")
 
 DRY_RUN = env_bool("DRY_RUN", True)
+FIXED_ORDER_QUANTITY = env_int("FIXED_ORDER_QUANTITY", 100)
 MAX_DRAWDOWN_PCT = env_float("MAX_DRAWDOWN_PCT", 2.0)
 SIGNAL_COOLDOWN_MINUTES = env_int("SIGNAL_COOLDOWN_MINUTES", 240)
 SIGNAL_JOURNAL_PATH = os.getenv("SIGNAL_JOURNAL_PATH", "data/signal_journal.csv")
