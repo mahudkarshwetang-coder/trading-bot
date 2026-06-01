@@ -54,6 +54,12 @@ OLLAMA_URL=http://localhost:11434/api/generate
 OLLAMA_MODEL=qwen2.5-coder:7b
 SCANNER_INTERVAL_SECONDS=600
 SIGNAL_COOLDOWN_MINUTES=240
+SIGNAL_JOURNAL_PATH=data/signal_journal.csv
+SIGNAL_CONTEXT_LIMIT=50
+CATEGORY_UNIVERSE_LIMIT=7000
+CATEGORY_MIN_SCORE=65
+CATEGORY_TARGET_LIMIT=60
+CATEGORY_TARGETS_PER_CATEGORY=15
 MASSIVE_API_KEY=your_massive_api_key
 ```
 
@@ -68,6 +74,8 @@ Live extended-hours order routing remains disabled unless both `DRY_RUN=false` a
 - `master_scanner.py`: single scanner gateway and market-hours orchestrator.
 - `macro_scanner.py`: writes daily sector context into `strategy_vault`.
 - `fundamental_scanner.py`: creates the daily target list and updates Supabase watchlist.
+- `category_universe_builder.py`: scans the broad Yahoo ticker universe and classifies tickers into dynamic themes.
+- `category_target_scanner.py`: picks the strongest category targets and updates the active watchlist.
 - `energy_universe_builder.py`: builds a broad NYSE/Nasdaq energy stock universe for traditional, clean, transition, and futuristic energy themes.
 - `radar.py`: updates the volatility watchlist from Yahoo trending symbols.
 - `earnings_radar.py`: updates the earnings watchlist from Yahoo's calendar.
@@ -78,6 +86,50 @@ Live extended-hours order routing remains disabled unless both `DRY_RUN=false` a
 - `signal_journal.py`: tracks accepted scanner signals and scores forward returns for training.
 - `main.py`: IBKR/Supabase execution bridge.
 - `broker_sync.py`: reads live IBKR paper positions and syncs them to Supabase for the iPad Ledger.
+
+## Dynamic Category Universe
+
+The default master flow is now category-first rather than fixed-stock-first. The broad category universe scans the Yahoo ticker list, classifies NYSE/Nasdaq equities into themes, and stores matches in `public.category_universe`.
+
+Initial categories include:
+
+- Energy
+- Logistics
+- Infrastructure
+- Materials
+
+Run this SQL once in Supabase:
+
+```sql
+-- supabase/category_universe.sql
+```
+
+Run a local dry run:
+
+```powershell
+python category_universe_builder.py --dry-run --limit 250
+```
+
+Run the broad daily universe scan:
+
+```powershell
+python category_universe_builder.py --limit 7000
+```
+
+Select dynamic daily targets from the category universe:
+
+```powershell
+python category_target_scanner.py
+```
+
+Or use the master:
+
+```powershell
+python master_scanner.py category-universe
+python master_scanner.py premarket
+```
+
+`daily-cycle` runs this category universe flow automatically before scanning. Fixed test stocks are not required for normal scanner operation.
 
 ## Energy Universe Tracking
 
@@ -248,7 +300,20 @@ Run a read-only preflight check:
 python health_check.py
 ```
 
-Run pre-market context and target generation:
+Run the broad daily universe scan and pre-market target generation:
+
+```powershell
+python master_scanner.py category-universe
+python master_scanner.py premarket
+```
+
+Or run the all-in daily flow:
+
+```powershell
+python master_scanner.py daily-cycle
+```
+
+Run pre-market target generation only:
 
 ```powershell
 python master_scanner.py premarket
@@ -285,6 +350,7 @@ This runs:
 
 ```text
 health preflight
+category universe scan
 premarket scanners
 intraday scanners
 context enrichment
@@ -299,6 +365,7 @@ python master_scanner.py preflight
 python master_scanner.py context
 python master_scanner.py broker-sync
 python master_scanner.py journal
+python master_scanner.py category-universe --dry-run
 python master_scanner.py energy-universe --dry-run
 ```
 

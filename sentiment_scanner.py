@@ -5,11 +5,39 @@ from signal_utils import insert_signal_with_cooldown
 
 # --- CONFIGURATION ---
 supabase = get_supabase_client()
-WATCHLIST = ['AAPL', 'NVDA', 'TSLA', 'MSFT']
 
 # --- THE NLP BRAIN (Lexicon) ---
 BULLISH_WORDS = ['surge', 'beat', 'growth', 'upgrade', 'jump', 'record', 'soar', 'buy', 'outperform']
 BEARISH_WORDS = ['miss', 'decline', 'drop', 'downgrade', 'fall', 'plunge', 'sell', 'underperform', 'lawsuit']
+
+
+def load_dynamic_watchlist():
+    tickers = []
+    try:
+        with open("daily_targets.txt", "r", encoding="utf-8") as target_file:
+            tickers.extend([item.strip() for item in target_file.read().split(",") if item.strip()])
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        print(f"Could not read daily_targets.txt: {exc}")
+
+    try:
+        response = supabase.table("bot_settings").select("watchlist,radar_watchlist,earnings_watchlist").eq("id", 1).execute()
+        if response.data:
+            config = response.data[0]
+            for key in ("watchlist", "radar_watchlist", "earnings_watchlist"):
+                tickers.extend(config.get(key) or [])
+    except Exception as exc:
+        print(f"Could not load dynamic watchlists from Supabase: {exc}")
+
+    unique = []
+    seen = set()
+    for ticker in tickers:
+        ticker = str(ticker).strip().upper()
+        if ticker and ticker not in seen:
+            unique.append(ticker)
+            seen.add(ticker)
+    return unique
 
 def analyze_headline_sentiment(headline):
     """Scans a sentence and calculates a basic Bull/Bear momentum score."""
@@ -80,7 +108,12 @@ def run_nlp_scan():
     print("🧠 AI Sentiment Scanner Online. Reading live news feeds...")
     print("-" * 50)
     
-    for ticker in WATCHLIST:
+    watchlist = load_dynamic_watchlist()
+    if not watchlist:
+        print("No dynamic watchlist loaded. Run python master_scanner.py premarket first.")
+        return
+
+    for ticker in watchlist:
         sentiment, headlines = fetch_and_analyze_news(ticker)
         
         print(f"   ↳ Net Sentiment Score: {sentiment:.2f}")

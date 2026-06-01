@@ -3,6 +3,7 @@ import time
 
 from config import (
     BROKER_SYNC_MARK_MISSING_SIGNALS,
+    CATEGORY_MIN_SCORE,
     ENERGY_MIN_SCORE,
     SCAN_EXTENDED_HOURS,
     SCAN_GLOBAL_OVERNIGHT,
@@ -27,6 +28,12 @@ def run_energy_targets():
     from energy_target_scanner import run_energy_target_scan
 
     run_energy_target_scan()
+
+
+def run_category_targets():
+    from category_target_scanner import run_category_target_scan
+
+    run_category_target_scan()
 
 
 def run_earnings():
@@ -113,9 +120,21 @@ def run_energy_universe(dry_run=False):
     return True
 
 
+def run_category_universe(dry_run=False):
+    from category_universe_builder import CATEGORY_UNIVERSE_LIMIT, build_category_universe
+
+    build_category_universe(
+        limit=CATEGORY_UNIVERSE_LIMIT,
+        min_score=CATEGORY_MIN_SCORE,
+        dry_run=dry_run,
+    )
+    return True
+
+
 SCANNERS = {
     "macro": run_macro,
     "fundamental": run_fundamental,
+    "categories": run_category_targets,
     "energy": run_energy_targets,
     "earnings": run_earnings,
     "radar": run_radar,
@@ -125,7 +144,9 @@ SCANNERS = {
 }
 
 PHASES = {
-    "premarket": ["macro", "fundamental", "earnings"],
+    "premarket": ["macro", "categories", "earnings"],
+    "fundamental_premarket": ["macro", "fundamental", "earnings"],
+    "category_premarket": ["macro", "categories", "earnings"],
     "energy_premarket": ["macro", "energy", "earnings"],
     "intraday": ["radar", "sentiment", "technical", "llm"],
     "energy_full": ["macro", "energy", "earnings", "radar", "sentiment", "technical", "llm"],
@@ -138,12 +159,14 @@ OPERATIONS = {
     "broker-sync": run_broker_snapshot,
     "journal": run_journal,
     "energy-universe": run_energy_universe,
+    "category-universe": run_category_universe,
 }
 
 WORKFLOWS = {
     "training-cycle": ["intraday", "context", "broker-sync", "journal"],
-    "daily-cycle": ["preflight", "premarket", "intraday", "context", "broker-sync", "journal"],
+    "daily-cycle": ["preflight", "category-universe", "premarket", "intraday", "context", "broker-sync", "journal"],
     "energy-cycle": ["preflight", "energy_premarket", "intraday", "context", "broker-sync", "journal"],
+    "category-cycle": ["preflight", "category-universe", "category_premarket", "intraday", "context", "broker-sync", "journal"],
 }
 
 
@@ -182,7 +205,7 @@ def run_phase(phase):
 def run_operation(name, dry_run=False, mark_missing_signals=BROKER_SYNC_MARK_MISSING_SIGNALS):
     print(f"\n[ALPHA ENGINE] Running operation: {name}")
     try:
-        if name in {"context", "energy-universe"}:
+        if name in {"context", "energy-universe", "category-universe"}:
             result = OPERATIONS[name](dry_run=dry_run)
         elif name == "broker-sync":
             result = OPERATIONS[name](
@@ -256,6 +279,7 @@ def run_intraday_training_cycle():
 def master_engine():
     print("[ALPHA ENGINE] Master Autonomous Controller Online.")
     pre_market_done = False
+    category_universe_date = None
 
     while True:
         now = now_market_time()
@@ -263,6 +287,9 @@ def master_engine():
 
         if session.name == "premarket":
             if not pre_market_done and now.weekday() < 5:
+                if category_universe_date != now.date():
+                    run_operation("category-universe")
+                    category_universe_date = now.date()
                 run_pre_market_sweep()
                 pre_market_done = True
             else:
