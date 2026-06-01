@@ -61,6 +61,11 @@ CATEGORY_UNIVERSE_LIMIT=7000
 CATEGORY_MIN_SCORE=65
 CATEGORY_TARGET_LIMIT=60
 CATEGORY_TARGETS_PER_CATEGORY=15
+TECH_NEWS_TICKERS=AAPL,MSFT,NVDA,AMD,AVGO,AMZN,META,GOOGL,TSLA,ORCL,CRM,ADBE,NFLX,INTC,QCOM,MU,IBM,TSM,ASML,ARM,PLTR,SMCI,NOW,SNOW,PANW,CRWD,DDOG,NET
+TECH_NEWS_INTERVAL_SECONDS=180
+TECH_NEWS_MAX_WORKERS=8
+TECH_NEWS_LIMIT_PER_TICKER=5
+TECH_NEWS_OUTPUT_PATH=data/tech_news_feed.jsonl
 MASSIVE_API_KEY=your_massive_api_key
 ```
 
@@ -77,6 +82,7 @@ Live extended-hours order routing remains disabled unless both `DRY_RUN=false` a
 - `fundamental_scanner.py`: creates the daily target list and updates Supabase watchlist.
 - `category_universe_builder.py`: scans the broad Yahoo ticker universe and classifies tickers into dynamic themes.
 - `category_target_scanner.py`: picks the strongest category targets and updates the active watchlist.
+- `tech_news_monitor.py`: standalone tech-stock headline monitor for running beside the scanner.
 - `energy_universe_builder.py`: builds a broad NYSE/Nasdaq energy stock universe for traditional, clean, transition, and futuristic energy themes.
 - `radar.py`: updates the volatility watchlist from Yahoo trending symbols.
 - `earnings_radar.py`: updates the earnings watchlist from Yahoo's calendar.
@@ -131,6 +137,28 @@ python master_scanner.py premarket
 ```
 
 `daily-cycle` runs this category universe flow automatically before scanning. Fixed test stocks are not required for normal scanner operation.
+
+## Tech News Monitor
+
+`tech_news_monitor.py` is a separate news-only process. It does not place orders or create trade signals. It watches a configurable tech-stock ticker list, prints fresh Yahoo Finance headlines, tags likely impact areas, deduplicates across scans, and appends new items to `data/tech_news_feed.jsonl`.
+
+Run one scan:
+
+```powershell
+python tech_news_monitor.py --once
+```
+
+Run continuously in a separate PowerShell window:
+
+```powershell
+python tech_news_monitor.py
+```
+
+Customize the list without editing code:
+
+```powershell
+python tech_news_monitor.py --tickers NVDA,AMD,MSFT,AAPL,AVGO --interval 120
+```
 
 ## Energy Universe Tracking
 
