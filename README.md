@@ -81,6 +81,12 @@ MARKET_BRIEFING_CATEGORY_LIMIT=10
 MARKET_BRIEFING_TIMEOUT_SECONDS=120
 MARKET_BRIEFING_OUTPUT_PATH=data/daily_market_briefings.jsonl
 MARKET_BRIEFING_PUSH_SUPABASE=true
+POST_TRADE_REVIEW_LOOKBACK_DAYS=14
+POST_TRADE_REVIEW_LIMIT=25
+POST_TRADE_REVIEW_HORIZON=1d
+POST_TRADE_REVIEW_TIMEOUT_SECONDS=120
+POST_TRADE_REVIEW_OUTPUT_PATH=data/post_trade_reviews.jsonl
+POST_TRADE_REVIEW_PUSH_SUPABASE=true
 MASSIVE_API_KEY=your_massive_api_key
 ```
 
@@ -106,6 +112,7 @@ Live extended-hours order routing remains disabled unless both `DRY_RUN=false` a
 - `llm_scanner.py`: creates LLM/RAG-informed signals from headlines and strategy rules.
 - `signal_quality_filter.py`: asks local Qwen to approve or block news/LLM signals before they enter Supabase.
 - `daily_market_briefing.py`: generates morning/evening Qwen briefings from category/news/signal/position/macro data.
+- `post_trade_review.py`: asks Qwen to review closed paper trades and extract training lessons.
 - `context_enrichment.py`: enriches pending/approved signals with IBKR position, quote, SEC filing, and macro context for the iPad Execution Terminal.
 - `signal_journal.py`: tracks accepted scanner signals and scores forward returns for training.
 - `main.py`: IBKR/Supabase execution bridge.
@@ -233,6 +240,49 @@ You can also run through master:
 python master_scanner.py briefing
 python master_scanner.py briefing --dry-run
 ```
+
+## Post-Trade Journal Analysis
+
+`post_trade_review.py` reviews completed paper trades with local Qwen. For each closed/closeable executed signal with journal outcomes, it analyzes:
+
+- Signal reason
+- Entry and exit proxy prices
+- Directional PnL %
+- What worked
+- What failed
+- Concrete training adjustments
+
+Run this SQL once in Supabase:
+
+```sql
+-- supabase/post_trade_reviews.sql
+```
+
+Run local review pass:
+
+```powershell
+python post_trade_review.py
+```
+
+Preview without Supabase writes:
+
+```powershell
+python post_trade_review.py --dry-run
+```
+
+Master operation:
+
+```powershell
+python master_scanner.py post-trade-review
+```
+
+Support workflow:
+
+```powershell
+python master_scanner.py review-cycle
+```
+
+Reviews are appended locally to `data/post_trade_reviews.jsonl` and can sync to Supabase `post_trade_reviews` for iPad display and training dashboards.
 
 ## Energy Universe Tracking
 

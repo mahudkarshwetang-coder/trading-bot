@@ -68,6 +68,12 @@ OPTIONAL_ENV = [
     "MARKET_BRIEFING_TIMEOUT_SECONDS",
     "MARKET_BRIEFING_OUTPUT_PATH",
     "MARKET_BRIEFING_PUSH_SUPABASE",
+    "POST_TRADE_REVIEW_LOOKBACK_DAYS",
+    "POST_TRADE_REVIEW_LIMIT",
+    "POST_TRADE_REVIEW_HORIZON",
+    "POST_TRADE_REVIEW_TIMEOUT_SECONDS",
+    "POST_TRADE_REVIEW_OUTPUT_PATH",
+    "POST_TRADE_REVIEW_PUSH_SUPABASE",
     "MASSIVE_API_KEY",
 ]
 
@@ -212,6 +218,12 @@ def check_supabase(report):
             report.ok("Supabase daily_market_briefings", f"{len(briefings.data or [])} sample row(s)")
         except Exception:
             report.warn("Supabase daily_market_briefings", "missing; run supabase/daily_market_briefings.sql for iPad briefings")
+
+        try:
+            post_trade = supabase.table("post_trade_reviews").select("signal_id,ticker").limit(1).execute()
+            report.ok("Supabase post_trade_reviews", f"{len(post_trade.data or [])} sample row(s)")
+        except Exception:
+            report.warn("Supabase post_trade_reviews", "missing; run supabase/post_trade_reviews.sql for Qwen trade coaching")
     except Exception as exc:
         report.fail("Supabase", str(exc))
 

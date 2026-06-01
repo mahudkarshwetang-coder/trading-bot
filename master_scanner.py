@@ -109,6 +109,12 @@ def run_journal():
     return True
 
 
+def run_post_trade_review(dry_run=False):
+    from post_trade_review import run_post_trade_review
+
+    return run_post_trade_review(dry_run=dry_run)
+
+
 def run_briefing(dry_run=False):
     from daily_market_briefing import run_daily_market_briefing
 
@@ -164,6 +170,7 @@ OPERATIONS = {
     "context": run_context,
     "broker-sync": run_broker_snapshot,
     "journal": run_journal,
+    "post-trade-review": run_post_trade_review,
     "briefing": run_briefing,
     "energy-universe": run_energy_universe,
     "category-universe": run_category_universe,
@@ -172,6 +179,7 @@ OPERATIONS = {
 WORKFLOWS = {
     "training-cycle": ["categories", "intraday", "context", "broker-sync", "journal"],
     "daily-cycle": ["preflight", "category-universe", "premarket", "intraday", "context", "broker-sync", "journal"],
+    "review-cycle": ["journal", "post-trade-review", "briefing"],
     "energy-cycle": ["preflight", "energy_premarket", "intraday", "context", "broker-sync", "journal"],
     "category-cycle": ["preflight", "category-universe", "category_premarket", "intraday", "context", "broker-sync", "journal"],
 }
@@ -215,7 +223,7 @@ def run_phase(phase):
 def run_operation(name, dry_run=False, mark_missing_signals=BROKER_SYNC_MARK_MISSING_SIGNALS):
     print(f"\n[ALPHA ENGINE] Running operation: {name}")
     try:
-        if name in {"context", "briefing", "energy-universe", "category-universe"}:
+        if name in {"context", "post-trade-review", "briefing", "energy-universe", "category-universe"}:
             result = OPERATIONS[name](dry_run=dry_run)
         elif name == "broker-sync":
             result = OPERATIONS[name](
