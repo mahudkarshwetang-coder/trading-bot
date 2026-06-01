@@ -10,6 +10,23 @@ from config import (
 
 supabase = get_supabase_client()
 
+DEFAULT_CATEGORIES = ["Energy", "Logistics", "Infrastructure", "Materials"]
+
+
+def fetch_category_rows(category, per_category, min_score):
+    response = (
+        supabase.table("category_universe")
+        .select("ticker, company_name, category, theme, category_score, market_cap, average_volume")
+        .eq("active", True)
+        .eq("category", category)
+        .gte("category_score", min_score)
+        .order("category_score", desc=True)
+        .order("market_cap", desc=True)
+        .limit(per_category * 2)
+        .execute()
+    )
+    return response.data or []
+
 
 def fetch_category_targets(
     limit=CATEGORY_TARGET_LIMIT,
@@ -20,35 +37,19 @@ def fetch_category_targets(
         "Loading dynamic category targets "
         f"(limit={limit}, per_category={per_category}, min_score={min_score})..."
     )
-    try:
-        response = (
-            supabase.table("category_universe")
-            .select("ticker, company_name, category, theme, category_score, market_cap, average_volume")
-            .eq("active", True)
-            .gte("category_score", min_score)
-            .order("category_score", desc=True)
-            .order("market_cap", desc=True)
-            .limit(max(limit * 4, 100))
-            .execute()
-        )
-    except Exception as exc:
-        print(f"Failed to load category targets: {exc}")
-        return []
-
-    rows = response.data or []
-    if not rows:
-        print("No category universe rows matched the target filters.")
-        return []
-
-    by_category = defaultdict(list)
-    for row in rows:
-        by_category[row.get("category") or "Uncategorized"].append(row)
-
     selected = []
     seen = set()
-    for category in sorted(by_category):
+
+    for category in DEFAULT_CATEGORIES:
+        try:
+            rows = fetch_category_rows(category, per_category, min_score)
+        except Exception as exc:
+            print(f"Failed to load {category} targets: {exc}")
+            continue
+
+        print(f"Category pool: {category} -> {len(rows)} candidate row(s)")
         count = 0
-        for row in by_category[category]:
+        for row in rows:
             ticker = row.get("ticker")
             if not ticker or ticker in seen:
                 continue
@@ -64,6 +65,19 @@ def fetch_category_targets(
         if len(selected) >= limit:
             break
 
+    if not selected:
+        print("No category universe rows matched the target filters.")
+        return []
+
+    category_counts = defaultdict(int)
+    for row in selected:
+        category_counts[row.get("category") or "Uncategorized"] += 1
+
+    count_summary = ", ".join(
+        f"{category}: {category_counts.get(category, 0)}"
+        for category in DEFAULT_CATEGORIES
+    )
+    print(f"Category coverage: {count_summary}")
     print(f"Loaded {len(selected)} dynamic category targets.")
     return selected
 
@@ -97,6 +111,7 @@ def run_category_target_scan():
     update_cloud_watchlist(tickers)
     save_local_targets(tickers)
     print("Dynamic category target sequence complete.")
+    return tickers
 
 
 if __name__ == "__main__":

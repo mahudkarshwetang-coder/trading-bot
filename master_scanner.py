@@ -163,7 +163,7 @@ OPERATIONS = {
 }
 
 WORKFLOWS = {
-    "training-cycle": ["intraday", "context", "broker-sync", "journal"],
+    "training-cycle": ["categories", "intraday", "context", "broker-sync", "journal"],
     "daily-cycle": ["preflight", "category-universe", "premarket", "intraday", "context", "broker-sync", "journal"],
     "energy-cycle": ["preflight", "energy_premarket", "intraday", "context", "broker-sync", "journal"],
     "category-cycle": ["preflight", "category-universe", "category_premarket", "intraday", "context", "broker-sync", "journal"],
