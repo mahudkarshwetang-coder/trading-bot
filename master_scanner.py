@@ -1,16 +1,13 @@
 import argparse
 import time
-from datetime import datetime
-
-import pytz
 
 from config import (
     BROKER_SYNC_MARK_MISSING_SIGNALS,
     ENERGY_MIN_SCORE,
+    SCAN_EXTENDED_HOURS,
     SCANNER_INTERVAL_SECONDS,
 )
-
-EST = pytz.timezone("US/Eastern")
+from market_session import get_market_session, now_market_time
 
 
 def run_macro():
@@ -150,14 +147,8 @@ WORKFLOWS = {
 
 
 def is_market_open(now):
-    """Checks if the current time is between 9:30 AM and 4:00 PM EST on a weekday."""
-    if now.weekday() >= 5:
-        return False
-
-    market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
-    market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
-
-    return market_open <= now <= market_close
+    """Backward-compatible regular-session check."""
+    return get_market_session(now).is_regular
 
 
 def run_scanner(name):
@@ -266,9 +257,10 @@ def master_engine():
     pre_market_done = False
 
     while True:
-        now = datetime.now(EST)
+        now = now_market_time()
+        session = get_market_session(now)
 
-        if 8 <= now.hour < 9 or (now.hour == 9 and now.minute < 30):
+        if session.name == "premarket":
             if not pre_market_done and now.weekday() < 5:
                 run_pre_market_sweep()
                 pre_market_done = True
@@ -276,7 +268,14 @@ def master_engine():
                 print(f"[{now.strftime('%I:%M %p')}] Waiting for opening bell...")
                 time.sleep(60)
 
-        elif is_market_open(now):
+            if SCAN_EXTENDED_HOURS:
+                run_intraday_training_cycle()
+                cooldown_minutes = max(1, SCANNER_INTERVAL_SECONDS // 60)
+                print(f"\n[{now.strftime('%I:%M %p')}] Premarket loop complete. Cooling down for {cooldown_minutes} minutes.")
+                time.sleep(max(60, SCANNER_INTERVAL_SECONDS))
+
+        elif session.is_regular or (SCAN_EXTENDED_HOURS and session.is_extended):
+            print(f"[{now.strftime('%I:%M %p')}] Market session: {session.name}")
             run_intraday_training_cycle()
             cooldown_minutes = max(1, SCANNER_INTERVAL_SECONDS // 60)
             print(f"\n[{now.strftime('%I:%M %p')}] Loop complete. Cooling down for {cooldown_minutes} minutes.")

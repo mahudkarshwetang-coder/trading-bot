@@ -187,7 +187,7 @@ def latest_price(ticker):
     try:
         import yfinance as yf
 
-        history = yf.Ticker(ticker).history(period="1d", interval="1m")
+        history = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=True)
         if history.empty:
             history = yf.Ticker(ticker).history(period="5d", interval="1d")
         if history.empty:
@@ -261,7 +261,7 @@ def load_intraday_history(ticker, cache):
     try:
         import yfinance as yf
 
-        history = yf.Ticker(ticker).history(period="7d", interval="5m")
+        history = yf.Ticker(ticker).history(period="7d", interval="5m", prepost=True)
         if not history.empty:
             if history.index.tz is None:
                 history.index = history.index.tz_localize(timezone.utc)

@@ -33,7 +33,16 @@ IBKR_HOST=127.0.0.1
 IBKR_PORT=7497
 IBKR_CLIENT_ID=10
 IBKR_SYNC_CLIENT_ID=11
+IBKR_CONTEXT_CLIENT_ID=12
 MAX_DRAWDOWN_PCT=2.0
+MARKET_TIMEZONE=US/Eastern
+PREMARKET_OPEN=04:00
+REGULAR_MARKET_OPEN=09:30
+REGULAR_MARKET_CLOSE=16:00
+AFTER_HOURS_CLOSE=20:00
+SCAN_EXTENDED_HOURS=true
+ALLOW_EXTENDED_HOURS_TRADING=false
+STOP_OUTSIDE_RTH=false
 BROKER_SYNC_INTERVAL_SECONDS=30
 BROKER_SYNC_MARK_MISSING_SIGNALS=false
 OLLAMA_URL=http://localhost:11434/api/generate
@@ -44,6 +53,8 @@ MASSIVE_API_KEY=your_massive_api_key
 ```
 
 `SCANNER_INTERVAL_SECONDS` controls the market-hours recommendation loop. The default is 600 seconds, or 10 minutes. `SIGNAL_COOLDOWN_MINUTES` defaults to 240 minutes, or 4 hours, so repeated ticker/action/channel ideas do not keep refilling the iPad queue.
+
+Extended-hours scanning is enabled by default with `SCAN_EXTENDED_HOURS=true`, covering `PREMARKET_OPEN` through `AFTER_HOURS_CLOSE` on weekdays. Live extended-hours order routing remains disabled unless both `DRY_RUN=false` and `ALLOW_EXTENDED_HOURS_TRADING=true` are set. `STOP_OUTSIDE_RTH=false` keeps stop orders regular-hours only by default; be careful changing this because stop behavior can differ by order type and venue outside regular hours.
 
 ## Main Scripts
 
@@ -96,7 +107,7 @@ The builder writes to `public.energy_universe` and does not create market signal
 
 ## Recommendation Noise Control
 
-During market hours, `master_scanner.py` runs the intraday scanner pulse every `SCANNER_INTERVAL_SECONDS`. Duplicate suppression blocks:
+During regular and configured extended market hours, `master_scanner.py` runs the intraday scanner pulse every `SCANNER_INTERVAL_SECONDS`. Duplicate suppression blocks:
 
 - Any matching ticker/action/channel signal that is still `pending`.
 - Any matching ticker/action/channel signal that is already `approved`.
@@ -297,7 +308,7 @@ python master_scanner.py radar
 python master_scanner.py llm
 ```
 
-To allow live order placement later, set `DRY_RUN=false` in `.env` and restart `main.py`.
+To allow regular-hours live order placement later, set `DRY_RUN=false` in `.env` and restart `main.py`. To allow live extended-hours routing too, also set `ALLOW_EXTENDED_HOURS_TRADING=true`.
 
 ## Test Scripts
 

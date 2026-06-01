@@ -6,13 +6,16 @@ from datetime import datetime, timezone
 from ib_insync import IB, Stock
 
 from config import (
+    ALLOW_EXTENDED_HOURS_TRADING,
     DRY_RUN,
     IBKR_CLIENT_ID,
     IBKR_HOST,
     IBKR_PORT,
     MAX_DRAWDOWN_PCT,
+    STOP_OUTSIDE_RTH,
     get_supabase_client,
 )
+from market_session import get_market_session
 
 # --- CONFIGURATION & SECURITY ---
 try:
@@ -27,6 +30,7 @@ account_pnl = None
 SYSTEM_HALTED = False
 TRADE_EVENTS_SETUP_WARNED = False
 NO_SHORT_SELL_STATUS = "blocked_no_position"
+EXTENDED_HOURS_BLOCK_STATUS = "blocked_extended_hours"
 
 def utc_now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -170,7 +174,9 @@ def get_current_price(contract):
     print(f"   ⚠️ IBKR Data Wall hit for {contract.symbol}. Engaging Web Oracle...")
     try:
         stock = yf.Ticker(contract.symbol)
-        df = stock.history(period="1d")
+        df = stock.history(period="1d", interval="1m", prepost=True)
+        if df.empty:
+            df = stock.history(period="5d", interval="1d")
         if not df.empty:
             web_price = round(float(df['Close'].iloc[-1]), 2)
             print(f"   ↳ Web Oracle successfully extracted price: ${web_price}")
@@ -217,6 +223,10 @@ def calculate_dynamic_quantity(entry_price, stop_loss_price, risk_percentage=1.0
 def route_bracket_order(ticker, action):
     """Generates a 3-Leg Marketable Bracket Order: Entry (Padded LMT) + Stop Loss + Take Profit."""
     print(f"📦 Generating Bracket Order block for {ticker}...")
+    session = get_market_session()
+    if session.is_extended and not DRY_RUN and not ALLOW_EXTENDED_HOURS_TRADING:
+        print(f"Extended-hours live routing is disabled. Refusing {action} {ticker} during {session.name}.")
+        return False, 0.0, False, None
     
     if action == "SELL":
         allowed, held_quantity = can_route_sell(ticker)
@@ -259,7 +269,7 @@ def route_bracket_order(ticker, action):
     for leg in bracket: leg.tif = 'GTC'          
     bracket[0].outsideRth = True  
     bracket[1].outsideRth = True  
-    bracket[2].outsideRth = False 
+    bracket[2].outsideRth = STOP_OUTSIDE_RTH
         
     bracket[0].transmit = False  
     bracket[1].transmit = False  
@@ -345,6 +355,18 @@ def listen_for_commands():
                     ticker, action, signal_id = signal["ticker"], signal["action_type"], signal["id"]
                     
                     print(f"\n🔔 ROUTING APPROVED SIGNAL: {ticker} ({action})")
+                    session = get_market_session()
+                    if session.is_extended and not DRY_RUN and not ALLOW_EXTENDED_HOURS_TRADING:
+                        supabase.table("market_signals").update({"status": EXTENDED_HOURS_BLOCK_STATUS}).eq("id", signal_id).execute()
+                        record_trade_event(
+                            signal,
+                            "blocked_extended_hours",
+                            status=EXTENDED_HOURS_BLOCK_STATUS,
+                            note=f"Live routing blocked during {session.name}; set ALLOW_EXTENDED_HOURS_TRADING=true to enable.",
+                        )
+                        print(f"Extended-hours live routing blocked for {ticker}.")
+                        continue
+
                     if action == "SELL":
                         allowed, held_quantity = can_route_sell(ticker)
                         if not allowed:
@@ -390,6 +412,7 @@ def listen_for_commands():
 if __name__ == "__main__":
     print("⚡ Starting Alpha Engine Order Routing Bridge [BRACKET MODE - ARMED]")
     print(f"Training Safety: DRY_RUN is {'ON' if DRY_RUN else 'OFF'}")
+    print(f"Extended Hours Trading: {'ON' if ALLOW_EXTENDED_HOURS_TRADING else 'OFF'}")
     print("-" * 50)
     connect_to_broker()
     print("-" * 50)
