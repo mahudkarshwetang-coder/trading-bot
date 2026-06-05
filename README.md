@@ -111,6 +111,7 @@ EXECUTION_GATE_RETRY_BACKOFF_SECONDS=2
 EXECUTION_GATE_KEEP_ALIVE=30m
 SCANNER_INTERVAL_SECONDS=600
 SIGNAL_COOLDOWN_MINUTES=240
+MASTER_DAILY_CATEGORY_REFRESH_TIME=05:30
 OPEN_SCANNER_ENABLED=true
 OPEN_SCANNER_START=09:30
 OPEN_SCANNER_END=10:15
@@ -288,10 +289,16 @@ Or use the master:
 
 ```powershell
 python master_scanner.py category-universe
-python master_scanner.py premarket
+python master_scanner.py categories
 ```
 
-`daily-cycle` runs this category universe flow automatically before scanning. Fixed test stocks are not required for normal scanner operation.
+When `python master_scanner.py` is running continuously, it also runs `daily-category-refresh` once per day at or after `MASTER_DAILY_CATEGORY_REFRESH_TIME` (default `05:30` Eastern). That workflow runs `category-universe` first, then `categories`, so the iPad/research/watchlist flow starts the morning from the fresh broad universe. Fixed test stocks are not required for normal scanner operation.
+
+To force that refresh immediately:
+
+```powershell
+python master_scanner.py daily-category-refresh
+```
 
 ## Tech News Monitor
 

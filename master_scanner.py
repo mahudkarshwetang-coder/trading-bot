@@ -7,12 +7,13 @@ from config import (
     BROKER_SYNC_MARK_MISSING_SIGNALS,
     CATEGORY_MIN_SCORE,
     ENERGY_MIN_SCORE,
+    MASTER_DAILY_CATEGORY_REFRESH_TIME,
     OPEN_SCANNER_ENABLED,
     SCAN_EXTENDED_HOURS,
     SCAN_GLOBAL_OVERNIGHT,
     SCANNER_INTERVAL_SECONDS,
 )
-from market_session import get_market_session, now_market_time
+from market_session import get_market_session, now_market_time, parse_time
 from performance_governor import (
     adjust_poll_interval,
     describe_performance_profile,
@@ -22,6 +23,7 @@ from performance_governor import (
 
 STARTUP_STATE_PATH = Path("data/master_startup_state.json")
 STARTUP_WORKFLOW = "daily-cycle"
+DAILY_CATEGORY_REFRESH_WORKFLOW = "daily-category-refresh"
 
 
 def run_macro():
@@ -227,6 +229,7 @@ OPERATIONS = {
 }
 
 WORKFLOWS = {
+    DAILY_CATEGORY_REFRESH_WORKFLOW: ["category-universe", "categories"],
     "training-cycle": ["categories", "intraday", "context", "broker-sync", "journal"],
     "daily-cycle": ["preflight", "category-universe", "premarket", "intraday", "ticker-intel", "context", "broker-sync", "journal"],
     "review-cycle": ["journal", "post-trade-review", "strategy-optimizer", "briefing"],
@@ -414,6 +417,44 @@ def run_daily_startup_once(now=None):
     return success
 
 
+def seconds_until_daily_category_refresh(now=None):
+    current = now or now_market_time()
+    refresh_time = parse_time(MASTER_DAILY_CATEGORY_REFRESH_TIME)
+    scheduled = current.replace(
+        hour=refresh_time.hour,
+        minute=refresh_time.minute,
+        second=0,
+        microsecond=0,
+    )
+    return max(0, int((scheduled - current).total_seconds()))
+
+
+def run_daily_category_refresh_once(now=None, force=False):
+    current = now or now_market_time()
+    today = market_date_string(current)
+    state = load_startup_state()
+    state_key = "last_daily_category_refresh_date"
+
+    if not force and state.get(state_key) == today:
+        return True
+
+    if not force and seconds_until_daily_category_refresh(current) > 0:
+        return False
+
+    print(
+        f"[ALPHA ENGINE] Running daily category refresh for {today} "
+        f"at/after {MASTER_DAILY_CATEGORY_REFRESH_TIME}: {DAILY_CATEGORY_REFRESH_WORKFLOW}"
+    )
+    success = run_workflow(DAILY_CATEGORY_REFRESH_WORKFLOW)
+    state[state_key] = today
+    state["last_daily_category_refresh_success"] = bool(success)
+    state["last_daily_category_refresh_finished_at"] = now_market_time().isoformat()
+    save_startup_state(state)
+    if not success:
+        print("[ALPHA ENGINE] Daily category refresh completed with failures.")
+    return bool(success)
+
+
 def run_pre_market_sweep():
     """Runs once before the market opens to establish the daily baseline."""
     return run_phase("premarket")
@@ -446,11 +487,12 @@ def maybe_run_opening_scan(now, opening_scan_date):
     return opening_scan_date
 
 
-def master_engine():
+def master_engine(force_daily_category_refresh=False):
     print("[ALPHA ENGINE] Master Autonomous Controller Online.")
     pre_market_done = False
     startup_date = None
     opening_scan_date = None
+    force_category_refresh = force_daily_category_refresh
 
     while True:
         now = now_market_time()
@@ -460,6 +502,9 @@ def master_engine():
             startup_date = now.date()
             pre_market_done = session.name != "premarket"
             opening_scan_date = None
+
+        run_daily_category_refresh_once(now, force=force_category_refresh)
+        force_category_refresh = False
 
         if session.name == "premarket":
             if not pre_market_done and now.weekday() < 5:
@@ -496,7 +541,11 @@ def master_engine():
                 pre_market_done = False
 
             print(f"[{now.strftime('%I:%M %p')}] Market is closed. Engine sleeping...")
-            time.sleep(900)
+            sleep_seconds = 900
+            seconds_to_category_refresh = seconds_until_daily_category_refresh(now)
+            if seconds_to_category_refresh > 0:
+                sleep_seconds = min(sleep_seconds, max(60, seconds_to_category_refresh))
+            time.sleep(sleep_seconds)
 
 
 def parse_args():
@@ -525,6 +574,11 @@ def parse_args():
         action="store_true",
         help="When running the engine, run daily-cycle startup even if today's marker exists.",
     )
+    parser.add_argument(
+        "--force-daily-category-refresh",
+        action="store_true",
+        help="When running the engine, run category-universe/categories even if today's marker exists.",
+    )
     return parser.parse_args()
 
 
@@ -535,7 +589,11 @@ def main():
             state = load_startup_state()
             state.pop("last_daily_startup_date", None)
             save_startup_state(state)
-        master_engine()
+        if args.force_daily_category_refresh and STARTUP_STATE_PATH.exists():
+            state = load_startup_state()
+            state.pop("last_daily_category_refresh_date", None)
+            save_startup_state(state)
+        master_engine(force_daily_category_refresh=args.force_daily_category_refresh)
     else:
         success = run_target(
             args.target,
