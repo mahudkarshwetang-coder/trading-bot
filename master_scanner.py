@@ -1,15 +1,27 @@
 import argparse
+import json
 import time
+from pathlib import Path
 
 from config import (
     BROKER_SYNC_MARK_MISSING_SIGNALS,
     CATEGORY_MIN_SCORE,
     ENERGY_MIN_SCORE,
+    OPEN_SCANNER_ENABLED,
     SCAN_EXTENDED_HOURS,
     SCAN_GLOBAL_OVERNIGHT,
     SCANNER_INTERVAL_SECONDS,
 )
 from market_session import get_market_session, now_market_time
+from performance_governor import (
+    adjust_poll_interval,
+    describe_performance_profile,
+    gaming_budget_pause,
+    should_defer_work,
+)
+
+STARTUP_STATE_PATH = Path("data/master_startup_state.json")
+STARTUP_WORKFLOW = "daily-cycle"
 
 
 def run_macro():
@@ -54,10 +66,22 @@ def run_sentiment():
     run_nlp_scan()
 
 
+def run_ibkr_news():
+    from ibkr_news_scanner import run_ibkr_news_scanner
+
+    return run_ibkr_news_scanner(once=True)
+
+
 def run_technical():
     from tech_scanner import run_market_scan
 
     run_market_scan()
+
+
+def run_opening_momentum():
+    from opening_momentum_scanner import run_opening_momentum_scan
+
+    return run_opening_momentum_scan()
 
 
 def run_llm():
@@ -115,6 +139,12 @@ def run_post_trade_review(dry_run=False):
     return run_post_trade_review(dry_run=dry_run)
 
 
+def run_strategy_optimizer(dry_run=False):
+    from strategy_optimizer import run_strategy_optimizer
+
+    return run_strategy_optimizer(dry_run=dry_run)
+
+
 def run_briefing(dry_run=False):
     from daily_market_briefing import run_daily_market_briefing
 
@@ -143,6 +173,20 @@ def run_category_universe(dry_run=False):
     return True
 
 
+def run_ticker_intel(dry_run=False):
+    from ticker_intelligence import sync_ticker_intelligence
+
+    sync_ticker_intelligence(dry_run=dry_run)
+    return True
+
+
+def run_routing_status():
+    from routing_status import main as routing_status_main
+
+    routing_status_main([])
+    return True
+
+
 SCANNERS = {
     "macro": run_macro,
     "fundamental": run_fundamental,
@@ -150,8 +194,10 @@ SCANNERS = {
     "energy": run_energy_targets,
     "earnings": run_earnings,
     "radar": run_radar,
+    "ibkr-news": run_ibkr_news,
     "sentiment": run_sentiment,
     "technical": run_technical,
+    "open": run_opening_momentum,
     "llm": run_llm,
 }
 
@@ -160,6 +206,7 @@ PHASES = {
     "fundamental_premarket": ["macro", "fundamental", "earnings"],
     "category_premarket": ["macro", "categories", "earnings"],
     "energy_premarket": ["macro", "energy", "earnings"],
+    "opening-bell": ["open"],
     "intraday": ["radar", "sentiment", "technical", "llm"],
     "energy_full": ["macro", "energy", "earnings", "radar", "sentiment", "technical", "llm"],
     "full": ["macro", "fundamental", "earnings", "radar", "sentiment", "technical", "llm"],
@@ -171,15 +218,18 @@ OPERATIONS = {
     "broker-sync": run_broker_snapshot,
     "journal": run_journal,
     "post-trade-review": run_post_trade_review,
+    "strategy-optimizer": run_strategy_optimizer,
     "briefing": run_briefing,
     "energy-universe": run_energy_universe,
     "category-universe": run_category_universe,
+    "ticker-intel": run_ticker_intel,
+    "routing-status": run_routing_status,
 }
 
 WORKFLOWS = {
     "training-cycle": ["categories", "intraday", "context", "broker-sync", "journal"],
-    "daily-cycle": ["preflight", "category-universe", "premarket", "intraday", "context", "broker-sync", "journal"],
-    "review-cycle": ["journal", "post-trade-review", "briefing"],
+    "daily-cycle": ["preflight", "category-universe", "premarket", "intraday", "ticker-intel", "context", "broker-sync", "journal"],
+    "review-cycle": ["journal", "post-trade-review", "strategy-optimizer", "briefing"],
     "energy-cycle": ["preflight", "energy_premarket", "intraday", "context", "broker-sync", "journal"],
     "category-cycle": ["preflight", "category-universe", "category_premarket", "intraday", "context", "broker-sync", "journal"],
 }
@@ -190,7 +240,41 @@ def is_market_open(now):
     return get_market_session(now).is_regular
 
 
+def load_startup_state():
+    try:
+        with STARTUP_STATE_PATH.open("r", encoding="utf-8") as state_file:
+            data = json.load(state_file)
+            return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:
+        print(f"[ALPHA ENGINE] Could not read startup state: {exc}")
+        return {}
+
+
+def save_startup_state(state):
+    try:
+        STARTUP_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with STARTUP_STATE_PATH.open("w", encoding="utf-8") as state_file:
+            json.dump(state, state_file, indent=2)
+    except Exception as exc:
+        print(f"[ALPHA ENGINE] Could not write startup state: {exc}")
+
+
+def market_date_string(now=None):
+    current = now or now_market_time()
+    return current.date().isoformat()
+
+
 def run_scanner(name):
+    if should_defer_work("scanner", name):
+        print(
+            f"\n[ALPHA ENGINE] Performance governor deferred scanner: {name} "
+            f"({describe_performance_profile()})"
+        )
+        return True
+
+    gaming_budget_pause(f"scanner:{name}", estimated_work_seconds=1.5)
     scanner = SCANNERS[name]
     print(f"\n--- Starting scanner: {name} ---")
     try:
@@ -221,9 +305,29 @@ def run_phase(phase):
 
 
 def run_operation(name, dry_run=False, mark_missing_signals=BROKER_SYNC_MARK_MISSING_SIGNALS):
+    if should_defer_work("operation", name):
+        print(
+            f"\n[ALPHA ENGINE] Performance governor deferred operation: {name} "
+            f"({describe_performance_profile()})"
+        )
+        return True
+
+    gaming_budget_pause(
+        f"operation:{name}",
+        estimated_work_seconds=0.75,
+        critical=name in {"broker-sync", "journal"},
+    )
     print(f"\n[ALPHA ENGINE] Running operation: {name}")
     try:
-        if name in {"context", "post-trade-review", "briefing", "energy-universe", "category-universe"}:
+        if name in {
+            "context",
+            "post-trade-review",
+            "strategy-optimizer",
+            "briefing",
+            "energy-universe",
+            "category-universe",
+            "ticker-intel",
+        }:
             result = OPERATIONS[name](dry_run=dry_run)
         elif name == "broker-sync":
             result = OPERATIONS[name](
@@ -256,8 +360,14 @@ def run_target(target, dry_run=False, mark_missing_signals=BROKER_SYNC_MARK_MISS
     raise ValueError(f"Unknown target: {target}")
 
 
-def run_workflow(name, dry_run=False, mark_missing_signals=BROKER_SYNC_MARK_MISSING_SIGNALS):
+def run_workflow(
+    name,
+    dry_run=False,
+    mark_missing_signals=BROKER_SYNC_MARK_MISSING_SIGNALS,
+    continue_on_failures=None,
+):
     print(f"\n[ALPHA ENGINE] Running workflow: {name}")
+    continue_on_failures = set(continue_on_failures or [])
     failures = 0
     for target in WORKFLOWS[name]:
         success = run_target(
@@ -267,6 +377,9 @@ def run_workflow(name, dry_run=False, mark_missing_signals=BROKER_SYNC_MARK_MISS
         )
         if not success:
             failures += 1
+            if target in continue_on_failures:
+                print(f"[ALPHA ENGINE] Continuing workflow after non-critical failure: {target}")
+                continue
             if target == "preflight":
                 print("[ALPHA ENGINE] Preflight failed; stopping workflow.")
                 break
@@ -277,6 +390,28 @@ def run_workflow(name, dry_run=False, mark_missing_signals=BROKER_SYNC_MARK_MISS
 
     print(f"[ALPHA ENGINE] Workflow {name} completed successfully.")
     return True
+
+
+def run_daily_startup_once(now=None):
+    current = now or now_market_time()
+    today = market_date_string(current)
+    state = load_startup_state()
+    if state.get("last_daily_startup_date") == today:
+        print(f"[ALPHA ENGINE] Daily startup workflow already completed for {today}.")
+        return True
+
+    print(f"[ALPHA ENGINE] Running once-per-day startup workflow for {today}: {STARTUP_WORKFLOW}")
+    success = run_workflow(
+        STARTUP_WORKFLOW,
+        continue_on_failures={"broker-sync", "context", "journal"},
+    )
+    state["last_daily_startup_date"] = today
+    state["last_daily_startup_success"] = bool(success)
+    state["last_daily_startup_finished_at"] = now_market_time().isoformat()
+    save_startup_state(state)
+    if not success:
+        print("[ALPHA ENGINE] Daily startup workflow had failures; entering engine loop anyway.")
+    return success
 
 
 def run_pre_market_sweep():
@@ -294,20 +429,40 @@ def run_intraday_training_cycle():
     return run_workflow("training-cycle")
 
 
+def maybe_run_opening_scan(now, opening_scan_date):
+    if not OPEN_SCANNER_ENABLED or opening_scan_date == now.date():
+        return opening_scan_date
+
+    try:
+        from opening_momentum_scanner import is_opening_scan_ready
+
+        if is_opening_scan_ready(now):
+            print("[ALPHA ENGINE] Opening-bell window detected.")
+            if run_scanner("open"):
+                return now.date()
+    except Exception as exc:
+        print(f"[ALPHA ENGINE] Opening-bell scan check failed: {exc}")
+
+    return opening_scan_date
+
+
 def master_engine():
     print("[ALPHA ENGINE] Master Autonomous Controller Online.")
     pre_market_done = False
-    category_universe_date = None
+    startup_date = None
+    opening_scan_date = None
 
     while True:
         now = now_market_time()
         session = get_market_session(now)
+        if startup_date != now.date():
+            run_daily_startup_once(now)
+            startup_date = now.date()
+            pre_market_done = session.name != "premarket"
+            opening_scan_date = None
 
         if session.name == "premarket":
             if not pre_market_done and now.weekday() < 5:
-                if category_universe_date != now.date():
-                    run_operation("category-universe")
-                    category_universe_date = now.date()
                 run_pre_market_sweep()
                 pre_market_done = True
             else:
@@ -316,9 +471,10 @@ def master_engine():
 
             if SCAN_EXTENDED_HOURS:
                 run_intraday_training_cycle()
-                cooldown_minutes = max(1, SCANNER_INTERVAL_SECONDS // 60)
+                sleep_seconds = adjust_poll_interval(SCANNER_INTERVAL_SECONDS)
+                cooldown_minutes = max(1, sleep_seconds // 60)
                 print(f"\n[{now.strftime('%I:%M %p')}] Premarket loop complete. Cooling down for {cooldown_minutes} minutes.")
-                time.sleep(max(60, SCANNER_INTERVAL_SECONDS))
+                time.sleep(max(60, sleep_seconds))
 
         elif (
             session.is_regular
@@ -326,10 +482,13 @@ def master_engine():
             or (SCAN_GLOBAL_OVERNIGHT and session.is_global_overnight)
         ):
             print(f"[{now.strftime('%I:%M %p')}] Market session: {session.name}")
+            if session.is_regular:
+                opening_scan_date = maybe_run_opening_scan(now, opening_scan_date)
             run_intraday_training_cycle()
-            cooldown_minutes = max(1, SCANNER_INTERVAL_SECONDS // 60)
+            sleep_seconds = adjust_poll_interval(SCANNER_INTERVAL_SECONDS)
+            cooldown_minutes = max(1, sleep_seconds // 60)
             print(f"\n[{now.strftime('%I:%M %p')}] Loop complete. Cooling down for {cooldown_minutes} minutes.")
-            time.sleep(max(60, SCANNER_INTERVAL_SECONDS))
+            time.sleep(max(60, sleep_seconds))
 
         else:
             if now.hour >= 16 and pre_market_done:
@@ -361,12 +520,21 @@ def parse_args():
         default=BROKER_SYNC_MARK_MISSING_SIGNALS,
         help="Let broker-sync mark executed signals missing from IBKR as closed_external.",
     )
+    parser.add_argument(
+        "--force-daily-startup",
+        action="store_true",
+        help="When running the engine, run daily-cycle startup even if today's marker exists.",
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
     if args.target == "engine":
+        if args.force_daily_startup and STARTUP_STATE_PATH.exists():
+            state = load_startup_state()
+            state.pop("last_daily_startup_date", None)
+            save_startup_state(state)
         master_engine()
     else:
         success = run_target(

@@ -1,8 +1,11 @@
 import argparse
 import json
+import re
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
 import requests
@@ -20,10 +23,22 @@ from config import (
     OLLAMA_MODEL,
     OLLAMA_URL,
     TECH_NEWS_OUTPUT_PATH,
+    IBKR_NEWS_OUTPUT_PATH,
     get_supabase_client,
 )
+from llm_metrics import record_llm_metric
 
-DEFAULT_CATEGORIES = ["Energy", "Logistics", "Infrastructure", "Materials"]
+DEFAULT_CATEGORIES = [
+    "Nuclear Energy",
+    "Data Center Power & Grid Infrastructure",
+    "AI Chips",
+    "Cybersecurity & AI Security",
+    "Aerospace Defense & Security",
+    "Energy",
+    "Logistics",
+    "Infrastructure",
+    "Materials",
+]
 CATEGORY_SNAPSHOT_PATH = Path("data/category_brief_snapshot.json")
 DEFAULT_OUTPUT_PATH = Path(MARKET_BRIEFING_OUTPUT_PATH)
 LATEST_MORNING_JSON = Path("data/latest_market_briefing_morning.json")
@@ -103,11 +118,11 @@ def save_json(path, data):
 
 
 def extract_json_object(text):
-    cleaned = (text or "").strip()
+    cleaned = str(text or "").strip()
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.IGNORECASE | re.DOTALL).strip()
     if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        if cleaned.lower().startswith("json"):
-            cleaned = cleaned[4:].strip()
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
@@ -116,6 +131,32 @@ def extract_json_object(text):
         if start >= 0 and end > start:
             return json.loads(cleaned[start:end + 1])
         raise
+
+
+def ollama_chat_url():
+    parsed = urlsplit(OLLAMA_URL)
+    if not parsed.scheme or not parsed.netloc:
+        return "http://localhost:11434/api/chat"
+    return urlunsplit((parsed.scheme, parsed.netloc, "/api/chat", "", ""))
+
+
+def ollama_uses_chat_endpoint():
+    parsed = urlsplit(OLLAMA_URL)
+    return parsed.path.rstrip("/").lower().endswith("/api/chat")
+
+
+def extract_ollama_text(response_data):
+    if not isinstance(response_data, dict):
+        return ""
+    response_text = str(response_data.get("response") or "").strip()
+    if response_text:
+        return response_text
+    message = response_data.get("message")
+    if isinstance(message, dict):
+        content_text = str(message.get("content") or "").strip()
+        if content_text:
+            return content_text
+    return ""
 
 
 def missing_table(exc, table_name):
@@ -223,6 +264,45 @@ def load_recent_tech_news(lookback_hours, limit):
     seen = set()
     for item in items:
         key = item.get("id") or f"{item.get('ticker')}|{item.get('title')}|{item.get('published_at')}"
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+        if len(unique) >= limit:
+            break
+    return {"available": True, "error": None, "items": unique}
+
+
+def load_recent_ibkr_news(lookback_hours, limit):
+    path = Path(IBKR_NEWS_OUTPUT_PATH)
+    if not path.exists():
+        return {"available": False, "error": "IBKR news feed file missing", "items": []}
+
+    cutoff = now_utc() - timedelta(hours=max(1, lookback_hours))
+    items = []
+    try:
+        with path.open("r", encoding="utf-8") as news_file:
+            for line in news_file:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                published = parse_datetime(item.get("published_at") or item.get("fetched_at"))
+                if published and published < cutoff:
+                    continue
+                item["_published_at"] = published.isoformat() if published else ""
+                items.append(item)
+    except Exception as exc:
+        return {"available": False, "error": f"IBKR news read failed: {exc}", "items": []}
+
+    items.sort(key=lambda row: row.get("_published_at", ""), reverse=True)
+    unique = []
+    seen = set()
+    for item in items:
+        key = item.get("id") or f"{item.get('ticker')}|{item.get('provider_code')}|{item.get('article_id')}"
         if key in seen:
             continue
         seen.add(key)
@@ -352,6 +432,24 @@ def compact_news(news_items):
     return compact
 
 
+def compact_ibkr_news(news_items):
+    compact = []
+    for item in news_items:
+        compact.append(
+            {
+                "ticker": item.get("ticker"),
+                "headline": item.get("headline"),
+                "published_at": item.get("published_at"),
+                "provider_code": item.get("provider_code"),
+                "action": item.get("action"),
+                "confidence": item.get("confidence"),
+                "signal_pushed": item.get("signal_pushed"),
+                "signal_note": item.get("signal_note"),
+            }
+        )
+    return compact
+
+
 def build_ollama_prompt(session_type, briefing_date, context):
     return f"""
 You are a concise portfolio strategist creating a {session_type} market briefing for a paper-trading desk.
@@ -359,7 +457,7 @@ Use only the provided data. Do not use external facts.
 
 Cover:
 1. Category universe shifts.
-2. Tech news highlights.
+2. Tech news and IBKR catalyst highlights.
 3. Open signal queue quality and risks.
 4. Current positions.
 5. Macro context.
@@ -427,18 +525,76 @@ def normalize_briefing(raw, session_type, briefing_date):
 
 
 def ask_ollama_for_briefing(session_type, briefing_date, context):
+    prompt = build_ollama_prompt(session_type, briefing_date, context)
     payload = {
         "model": OLLAMA_MODEL,
-        "prompt": build_ollama_prompt(session_type, briefing_date, context),
+        "prompt": prompt,
         "format": "json",
         "stream": False,
+        "think": False,
         "options": {"temperature": 0.1},
     }
-    response = requests.post(OLLAMA_URL, json=payload, timeout=MARKET_BRIEFING_TIMEOUT_SECONDS)
-    response.raise_for_status()
-    data = response.json()
-    parsed = extract_json_object(data.get("response", "{}"))
-    return normalize_briefing(parsed, session_type, briefing_date)
+    chat_payload = {
+        "model": payload["model"],
+        "messages": [{"role": "user", "content": payload["prompt"]}],
+        "format": payload["format"],
+        "stream": False,
+        "think": False,
+        "options": payload["options"],
+    }
+    started_at = time.perf_counter()
+    endpoint_label = "chat" if ollama_uses_chat_endpoint() else "generate"
+    raw_json_string = ""
+    try:
+        if ollama_uses_chat_endpoint():
+            response = requests.post(OLLAMA_URL, json=chat_payload, timeout=MARKET_BRIEFING_TIMEOUT_SECONDS)
+        else:
+            response = requests.post(OLLAMA_URL, json=payload, timeout=MARKET_BRIEFING_TIMEOUT_SECONDS)
+        response.raise_for_status()
+        data = response.json()
+        raw_json_string = extract_ollama_text(data)
+        if not raw_json_string and not ollama_uses_chat_endpoint():
+            chat_response = requests.post(ollama_chat_url(), json=chat_payload, timeout=MARKET_BRIEFING_TIMEOUT_SECONDS)
+            chat_response.raise_for_status()
+            chat_data = chat_response.json()
+            raw_json_string = extract_ollama_text(chat_data)
+        if not raw_json_string:
+            raise RuntimeError("Ollama returned empty response content.")
+        parsed = extract_json_object(raw_json_string)
+        record_llm_metric(
+            source="daily_market_briefing",
+            task="market_briefing",
+            model=OLLAMA_MODEL,
+            duration_seconds=time.perf_counter() - started_at,
+            success=True,
+            endpoint=endpoint_label,
+            item_count=1,
+            batch_size=1,
+            attempts=1,
+            timeout_seconds=MARKET_BRIEFING_TIMEOUT_SECONDS,
+            prompt_chars=len(prompt),
+            response_chars=len(raw_json_string),
+            extra={"session_type": session_type, "briefing_date": str(briefing_date)},
+        )
+        return normalize_briefing(parsed, session_type, briefing_date)
+    except Exception as exc:
+        record_llm_metric(
+            source="daily_market_briefing",
+            task="market_briefing",
+            model=OLLAMA_MODEL,
+            duration_seconds=time.perf_counter() - started_at,
+            success=False,
+            endpoint=endpoint_label,
+            item_count=1,
+            batch_size=1,
+            attempts=1,
+            timeout_seconds=MARKET_BRIEFING_TIMEOUT_SECONDS,
+            prompt_chars=len(prompt),
+            response_chars=len(raw_json_string),
+            error=exc,
+            extra={"session_type": session_type, "briefing_date": str(briefing_date)},
+        )
+        raise
 
 
 def fallback_briefing(session_type, briefing_date, context, reason):
@@ -458,8 +614,12 @@ def fallback_briefing(session_type, briefing_date, context, reason):
     news_lines = []
     for item in context["tech_news"]["highlights"][:5]:
         news_lines.append(f"{item.get('ticker')}: {item.get('title')}")
+    for item in context.get("ibkr_news", {}).get("highlights", [])[:5]:
+        news_lines.append(
+            f"IBKR {item.get('ticker')}: {item.get('action')} {item.get('headline')}"
+        )
     if not news_lines:
-        news_lines.append("No recent tech news items in the lookback window.")
+        news_lines.append("No recent tech or IBKR catalyst news items in the lookback window.")
 
     signal_summary = context["open_signals"]["summary"]
     open_signal_lines = [
@@ -576,6 +736,7 @@ def push_briefing_to_supabase(supabase, record):
 def build_source_summary(context):
     category_available = context["category_context"]["available"]
     news_available = context["tech_news"]["available"]
+    ibkr_news_available = context.get("ibkr_news", {}).get("available", False)
     signals_available = context["open_signals"]["available"]
     positions_available = context["positions"]["available"]
     macro_available = context["macro_context"]["available"]
@@ -588,6 +749,8 @@ def build_source_summary(context):
         ) if category_available else 0,
         "tech_news_available": news_available,
         "tech_news_items": len(context["tech_news"]["items"]) if news_available else 0,
+        "ibkr_news_available": ibkr_news_available,
+        "ibkr_news_items": len(context.get("ibkr_news", {}).get("items", [])) if ibkr_news_available else 0,
         "open_signals_available": signals_available,
         "open_signals_items": len(context["open_signals"]["rows"]) if signals_available else 0,
         "positions_available": positions_available,
@@ -613,6 +776,7 @@ def run_daily_market_briefing(
     print(f"Generating {session_type} market briefing for {briefing_date}...")
     category_context = get_category_universe_context(supabase, category_limit)
     tech_news = load_recent_tech_news(lookback_hours, news_limit)
+    ibkr_news = load_recent_ibkr_news(lookback_hours, news_limit)
     open_signals = fetch_open_signals(supabase, signal_limit)
     positions = fetch_positions(supabase, position_limit)
     macro_context = read_macro_context()
@@ -630,6 +794,11 @@ def run_daily_market_briefing(
             "available": tech_news["available"],
             "error": tech_news["error"],
             "highlights": compact_news(tech_news["items"]),
+        },
+        "ibkr_news": {
+            "available": ibkr_news["available"],
+            "error": ibkr_news["error"],
+            "highlights": compact_ibkr_news(ibkr_news["items"]),
         },
         "open_signals": {
             "available": open_signals["available"],
@@ -662,6 +831,7 @@ def run_daily_market_briefing(
         {
             "category_context": category_context,
             "tech_news": tech_news,
+            "ibkr_news": ibkr_news,
             "open_signals": open_signals,
             "positions": positions,
             "macro_context": macro_context,

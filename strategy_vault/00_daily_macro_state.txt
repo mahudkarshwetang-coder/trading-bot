@@ -1,16 +1,16 @@
-# DAILY MACROECONOMIC STATE (2026-05-22)
+# DAILY MACROECONOMIC STATE (2026-06-04)
 CRITICAL CONTEXT: When scoring any stock today, you MUST consider the health of its broader sector below.
 
-- Technology (AAPL, MSFT, NVDA): The XLK ETF is currently BULLISH (Price is 3.89% above its 15-day average).
-- Financials (BRK.B, JPM, V): The XLF ETF is currently BULLISH (Price is 1.06% above its 15-day average).
-- Health Care (LLY, UNH, JNJ): The XLV ETF is currently BULLISH (Price is 2.65% above its 15-day average).
-- Consumer Discretionary (AMZN, TSLA, HD): The XLY ETF is currently BULLISH (Price is 0.85% above its 15-day average).
-- Communication Services (META, GOOGL, NFLX): The XLC ETF is currently BEARISH (Price is 0.59% below its 15-day average).
-- Industrials (GE, CAT, UBER): The XLI ETF is currently BEARISH (Price is 0.33% below its 15-day average).
-- Consumer Staples (WMT, PG, KO): The XLP ETF is currently BULLISH (Price is 0.14% above its 15-day average).
-- Energy (XOM, CVX, COP): The XLE ETF is currently BULLISH (Price is 1.35% above its 15-day average).
-- Utilities (NEE, SO, DUK): The XLU ETF is currently BULLISH (Price is 0.88% above its 15-day average).
-- Real Estate (PLD, AMT, EQIX): The XLRE ETF is currently BULLISH (Price is 0.65% above its 15-day average).
-- Materials (LIN, SHW, FCX): The XLB ETF is currently BEARISH (Price is 1.59% below its 15-day average).
+- Technology (AAPL, MSFT, NVDA): The XLK ETF is currently BULLISH (Price is 6.88% above its 15-day average).
+- Financials (BRK.B, JPM, V): The XLF ETF is currently BEARISH (Price is 1.09% below its 15-day average).
+- Health Care (LLY, UNH, JNJ): The XLV ETF is currently BEARISH (Price is 0.13% below its 15-day average).
+- Consumer Discretionary (AMZN, TSLA, HD): The XLY ETF is currently BEARISH (Price is 1.50% below its 15-day average).
+- Communication Services (META, GOOGL, NFLX): The XLC ETF is currently BEARISH (Price is 3.15% below its 15-day average).
+- Industrials (GE, CAT, UBER): The XLI ETF is currently BULLISH (Price is 0.87% above its 15-day average).
+- Consumer Staples (WMT, PG, KO): The XLP ETF is currently BEARISH (Price is 2.41% below its 15-day average).
+- Energy (XOM, CVX, COP): The XLE ETF is currently BULLISH (Price is 0.36% above its 15-day average).
+- Utilities (NEE, SO, DUK): The XLU ETF is currently BEARISH (Price is 1.67% below its 15-day average).
+- Real Estate (PLD, AMT, EQIX): The XLRE ETF is currently BEARISH (Price is 1.19% below its 15-day average).
+- Materials (LIN, SHW, FCX): The XLB ETF is currently BULLISH (Price is 1.62% above its 15-day average).
 
 FIRM MANDATE: If a sector is BEARISH today, heavily discount any bullish news for individual stocks within that sector. Do not fight the broader market trend.

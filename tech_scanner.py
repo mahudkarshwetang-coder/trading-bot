@@ -56,7 +56,7 @@ def calculate_rsi(ticker):
 
 def push_signal_to_ipad(ticker, action, rsi_value, memo):
     """Uploads the generated signal to Supabase."""
-    confidence = 0.85 if action == "BUY" else 0.80 
+    confidence = 85.0 if action == "BUY" else 80.0
     
     payload = {
         "ticker": ticker,

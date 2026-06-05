@@ -12,6 +12,36 @@ from config import CATEGORY_MIN_SCORE, CATEGORY_UNIVERSE_LIMIT, get_supabase_cli
 YAHOO_DELAY_SECONDS = 0.15
 
 CATEGORY_RULES: Dict[str, Dict[str, Dict[str, object]]] = {
+    "Nuclear Energy": {
+        "Uranium / Fuel Cycle": {
+            "keywords": [
+                "uranium", "uranium mining", "nuclear fuel", "fuel cycle",
+                "enrichment", "conversion", "yellowcake", "u3o8",
+            ],
+            "score": 91,
+        },
+        "Reactors / Utilities": {
+            "keywords": [
+                "nuclear power", "nuclear generation", "nuclear plant",
+                "nuclear reactor", "reactor", "baseload power", "clean firm power",
+            ],
+            "score": 90,
+        },
+        "SMR / Advanced Nuclear": {
+            "keywords": [
+                "small modular reactor", "smr", "advanced reactor", "microreactor",
+                "modular reactor", "nuclear battery", "fast reactor",
+            ],
+            "score": 92,
+        },
+        "Nuclear Services / Components": {
+            "keywords": [
+                "nuclear services", "nuclear engineering", "reactor components",
+                "nuclear safety", "nuclear technology", "nuclear instrumentation",
+            ],
+            "score": 84,
+        },
+    },
     "Energy": {
         "Traditional Energy": {
             "keywords": [
@@ -29,7 +59,7 @@ CATEGORY_RULES: Dict[str, Dict[str, Dict[str, object]]] = {
         },
         "Nuclear / Uranium": {
             "keywords": ["nuclear", "uranium", "reactor", "nuclear fuel", "enrichment"],
-            "score": 86,
+            "score": 90,
         },
         "Storage / Hydrogen": {
             "keywords": ["battery", "energy storage", "hydrogen", "fuel cell", "electrolyzer"],
@@ -60,7 +90,10 @@ CATEGORY_RULES: Dict[str, Dict[str, Dict[str, object]]] = {
     "Infrastructure": {
         "Construction / Engineering": {
             "keywords": [
-                "construction", "engineering", "infrastructure", "civil", "contractor",
+                "construction", "engineering", "civil construction",
+                "civil infrastructure", "public infrastructure",
+                "transportation infrastructure", "water infrastructure",
+                "utility infrastructure", "infrastructure contractor",
                 "project management", "epc", "design-build",
             ],
             "score": 86,
@@ -108,6 +141,174 @@ CATEGORY_RULES: Dict[str, Dict[str, Dict[str, object]]] = {
             "score": 74,
         },
     },
+    "AI Chips": {
+        "AI Accelerators / GPUs": {
+            "keywords": [
+                "graphics processor", "gpu", "accelerator", "ai accelerator",
+                "artificial intelligence accelerator", "machine learning accelerator",
+                "inference", "training chip", "parallel computing", "cuda",
+            ],
+            "score": 90,
+        },
+        "Semiconductors / Foundry": {
+            "keywords": [
+                "semiconductor", "integrated circuit", "microprocessor", "system on a chip",
+                "asic", "fabless", "foundry", "wafer", "chip design",
+            ],
+            "score": 88,
+        },
+        "Semiconductor Equipment": {
+            "keywords": [
+                "semiconductor equipment", "lithography", "etch", "deposition",
+                "metrology", "wafer fabrication", "process control", "photomask",
+            ],
+            "score": 86,
+        },
+        "Memory / Interconnect": {
+            "keywords": [
+                "memory", "dram", "hbm", "high bandwidth memory", "nand",
+                "ethernet", "networking chip", "optical interconnect", "switching",
+                "data center connectivity",
+            ],
+            "score": 84,
+        },
+        "AI Data Center Infrastructure": {
+            "keywords": [
+                "ai infrastructure", "data center", "server", "rack", "liquid cooling",
+                "power management", "optical networking", "high performance computing",
+                "cloud infrastructure", "compute infrastructure",
+            ],
+            "score": 80,
+        },
+    },
+    "Data Center Power & Grid Infrastructure": {
+        "Grid Equipment / Electrification": {
+            "keywords": [
+                "grid modernization", "electrical grid", "power grid", "transmission",
+                "distribution", "substation", "transformer", "switchgear",
+                "circuit breaker", "power electronics", "electrification",
+                "electrical equipment", "power systems", "grid automation",
+                "smart grid",
+            ],
+            "score": 92,
+        },
+        "Data Center Power / Cooling": {
+            "keywords": [
+                "data center power", "data centre power", "critical power",
+                "power distribution unit", "pdu", "uninterruptible power supply",
+                "ups", "backup power", "generator", "thermal management",
+                "liquid cooling", "cooling systems", "rack power",
+                "data center cooling", "data centre cooling",
+            ],
+            "score": 91,
+        },
+        "Electrical Contractors / EPC": {
+            "keywords": [
+                "electrical contractor", "electrical construction",
+                "engineering procurement construction", "epc", "utility infrastructure",
+                "power infrastructure", "grid interconnection", "high-voltage",
+                "mission critical", "data center construction",
+            ],
+            "score": 88,
+        },
+        "Power Generation / Capacity": {
+            "keywords": [
+                "independent power producer", "merchant power", "power generation",
+                "electricity generation", "electric utility", "capacity market",
+                "baseload", "dispatchable power", "natural gas generation",
+                "gas turbine", "turbine", "distributed generation",
+            ],
+            "score": 87,
+        },
+        "Data Center REITs / Operators": {
+            "keywords": [
+                "data center reit", "data centre reit", "colocation",
+                "interconnection", "hyperscale", "data center services",
+                "data centre services", "digital infrastructure",
+            ],
+            "score": 84,
+        },
+    },
+    "Aerospace Defense & Security": {
+        "Defense Primes / Platforms": {
+            "keywords": [
+                "aerospace and defense", "defense contractor", "defence contractor",
+                "military aircraft", "combat systems", "naval", "shipbuilding",
+                "armored vehicle", "weapons systems", "defense systems",
+                "defence systems", "military systems",
+            ],
+            "score": 90,
+        },
+        "Missiles / Air Defense": {
+            "keywords": [
+                "missile", "missile defense", "missile defence", "air defense",
+                "air defence", "munitions", "ordnance", "hypersonic",
+                "rocket systems", "precision weapons", "interceptor",
+            ],
+            "score": 92,
+        },
+        "Drones / Autonomous Defense": {
+            "keywords": [
+                "unmanned", "drone", "uav", "uas", "autonomous systems",
+                "counter-drone", "counter uas", "loitering munition",
+                "robotic combat", "autonomous defense",
+            ],
+            "score": 89,
+        },
+        "Space / Satellites / ISR": {
+            "keywords": [
+                "satellite", "space systems", "geospatial intelligence",
+                "isr", "intelligence surveillance reconnaissance",
+                "surveillance", "reconnaissance", "radar", "remote sensing",
+                "space defense", "space defence",
+            ],
+            "score": 88,
+        },
+        "Electronic Warfare / Secure Comms": {
+            "keywords": [
+                "electronic warfare", "signals intelligence", "secure communications",
+                "tactical communications", "command and control", "c4isr",
+                "c5isr", "avionics", "military electronics", "defense electronics",
+            ],
+            "score": 87,
+        },
+    },
+    "Cybersecurity & AI Security": {
+        "Cloud / Endpoint / Network Security": {
+            "keywords": [
+                "cybersecurity", "cyber security", "endpoint security",
+                "cloud security", "network security", "firewall", "zero trust",
+                "threat detection", "threat intelligence", "security operations",
+                "security platform", "extended detection and response", "xdr",
+            ],
+            "score": 92,
+        },
+        "Identity / Access / Machine Identity": {
+            "keywords": [
+                "identity security", "identity access", "access management",
+                "privileged access", "authentication", "machine identity",
+                "secrets management", "certificate management",
+                "identity governance",
+            ],
+            "score": 89,
+        },
+        "AI Security / Governance": {
+            "keywords": [
+                "ai security", "artificial intelligence security", "model security",
+                "llm security", "ai governance", "secure ai", "prompt injection",
+                "model risk", "ai risk management", "security for ai",
+            ],
+            "score": 90,
+        },
+        "Application / Data Security": {
+            "keywords": [
+                "application security", "appsec", "data security", "data protection",
+                "vulnerability management", "devsecops", "secure software",
+                "data loss prevention", "dlp", "runtime security",
+            ],
+            "score": 86,
+        },
+    },
 }
 
 SECTOR_BOOSTS = {
@@ -117,11 +318,25 @@ SECTOR_BOOSTS = {
     "utilities": 8,
     "technology": 3,
     "communication services": 2,
+    "real estate": 3,
 }
 
 EXCLUDED_TERMS = [
     "biotechnology", "pharmaceutical", "bank", "insurance", "asset management",
-    "closed-end fund", "reit", "restaurant", "apparel",
+    "closed-end fund", "reit", "restaurant", "apparel", "nuclear medicine",
+    "radiopharmaceutical", "medical isotope",
+]
+
+EXCLUSION_OVERRIDE_TERMS = [
+    "energy", "logistics", "infrastructure", "materials", "mining",
+    "semiconductor", "chip", "integrated circuit", "data center",
+    "ai infrastructure", "high performance computing", "uranium",
+    "nuclear power", "nuclear reactor", "small modular reactor",
+    "nuclear fuel", "reactor", "grid modernization", "power grid",
+    "transformer", "switchgear", "critical power", "liquid cooling",
+    "data center power", "data center reit", "defense contractor",
+    "aerospace and defense", "missile", "munitions", "drone", "uav",
+    "satellite", "electronic warfare", "secure communications",
 ]
 
 
@@ -176,7 +391,7 @@ def classify_categories(info):
     haystack = " ".join([name, sector, industry, description]).lower()
 
     if any(term in haystack for term in EXCLUDED_TERMS):
-        if not any(core in haystack for core in ["energy", "logistics", "infrastructure", "materials", "mining"]):
+        if not any(core in haystack for core in EXCLUSION_OVERRIDE_TERMS):
             return []
 
     rows = []

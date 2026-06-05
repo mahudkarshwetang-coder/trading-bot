@@ -1,4 +1,7 @@
 import json
+import re
+import time
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
@@ -7,9 +10,15 @@ from config import (
     OLLAMA_URL,
     SIGNAL_QUALITY_FAIL_OPEN,
     SIGNAL_QUALITY_FILTER_ENABLED,
+    SIGNAL_QUALITY_KEEP_ALIVE,
     SIGNAL_QUALITY_MIN_SCORE,
+    SIGNAL_QUALITY_NUM_PREDICT,
+    SIGNAL_QUALITY_RETRY_ATTEMPTS,
+    SIGNAL_QUALITY_RETRY_BACKOFF_SECONDS,
     SIGNAL_QUALITY_TIMEOUT_SECONDS,
 )
+from llm_metrics import record_llm_metric
+from performance_governor import adjust_ollama_runtime, gaming_budget_pause, print_profile_notice
 
 
 DEFAULT_DECISION = {
@@ -24,11 +33,11 @@ DEFAULT_DECISION = {
 
 
 def extract_json_object(text):
-    cleaned = (text or "").strip()
+    cleaned = str(text or "").strip()
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.IGNORECASE | re.DOTALL).strip()
     if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        if cleaned.lower().startswith("json"):
-            cleaned = cleaned[4:].strip()
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
 
     try:
         return json.loads(cleaned)
@@ -40,11 +49,52 @@ def extract_json_object(text):
         raise
 
 
+def ollama_chat_url():
+    parsed = urlsplit(OLLAMA_URL)
+    if not parsed.scheme or not parsed.netloc:
+        return "http://localhost:11434/api/chat"
+    return urlunsplit((parsed.scheme, parsed.netloc, "/api/chat", "", ""))
+
+
+def ollama_uses_chat_endpoint():
+    parsed = urlsplit(OLLAMA_URL)
+    return parsed.path.rstrip("/").lower().endswith("/api/chat")
+
+
+def extract_ollama_text(response_data):
+    if not isinstance(response_data, dict):
+        return ""
+    response_text = str(response_data.get("response") or "").strip()
+    if response_text:
+        return response_text
+    message = response_data.get("message")
+    if isinstance(message, dict):
+        content_text = str(message.get("content") or "").strip()
+        if content_text:
+            return content_text
+    return ""
+
+
 def clamp_score(value):
     try:
         return max(0, min(100, int(round(float(value)))))
     except Exception:
         return 0
+
+
+def normalize_confidence_pct(value):
+    """
+    Normalize scanner confidence into 0-100 percent scale.
+    Supports both legacy 0-1 and native 0-100 payloads.
+    """
+    try:
+        numeric = float(value)
+    except Exception:
+        return 0.0
+
+    if numeric <= 1.0:
+        numeric *= 100.0
+    return round(max(0.0, min(100.0, numeric)), 2)
 
 
 def normalize_bool(value):
@@ -76,7 +126,7 @@ def normalize_decision(raw):
 def build_quality_prompt(payload, headlines=None, reasoning=None):
     ticker = payload.get("ticker")
     action = payload.get("action_type")
-    confidence = payload.get("confidence_score")
+    confidence = normalize_confidence_pct(payload.get("confidence_score"))
     channel = payload.get("channel")
     memo = payload.get("investment_memo")
 
@@ -142,28 +192,131 @@ def review_signal_quality(payload, headlines=None, reasoning=None):
     if not SIGNAL_QUALITY_FILTER_ENABLED:
         return True, dict(DEFAULT_DECISION), payload
 
+    payload["confidence_score"] = normalize_confidence_pct(payload.get("confidence_score"))
+
     ticker = payload.get("ticker")
     action = payload.get("action_type")
     print(f"   Qwen quality gate reviewing {action} {ticker}...")
+    print_profile_notice("signal_quality", prefix="   [PERFORMANCE]")
+
+    runtime = adjust_ollama_runtime(
+        "signal_quality",
+        keep_alive=SIGNAL_QUALITY_KEEP_ALIVE,
+        timeout_seconds=SIGNAL_QUALITY_TIMEOUT_SECONDS,
+        num_predict=SIGNAL_QUALITY_NUM_PREDICT,
+    )
+    if runtime["profile"].active:
+        gaming_budget_pause("signal_quality", estimated_work_seconds=0.5, critical=True)
 
     request_payload = {
         "model": OLLAMA_MODEL,
         "prompt": build_quality_prompt(payload, headlines=headlines, reasoning=reasoning),
         "format": "json",
         "stream": False,
-        "options": {"temperature": 0.0},
+        "keep_alive": runtime["keep_alive"],
+        "think": False,
+        "options": {
+            "temperature": 0.0,
+            "num_predict": max(48, int(runtime["num_predict"])),
+        },
+    }
+    chat_payload = {
+        "model": request_payload["model"],
+        "messages": [{"role": "user", "content": request_payload["prompt"]}],
+        "format": request_payload["format"],
+        "stream": False,
+        "keep_alive": request_payload["keep_alive"],
+        "think": False,
+        "options": request_payload["options"],
     }
 
+    attempts = max(1, int(SIGNAL_QUALITY_RETRY_ATTEMPTS))
+    timeout_seconds = max(10, int(runtime["timeout_seconds"]))
+    backoff_seconds = max(1, int(SIGNAL_QUALITY_RETRY_BACKOFF_SECONDS))
+    started_at = time.perf_counter()
+    endpoint_label = "chat" if ollama_uses_chat_endpoint() else "generate"
+    raw_json_string = ""
+    attempt = 0
+
     try:
-        response = requests.post(
-            OLLAMA_URL,
-            json=request_payload,
-            timeout=SIGNAL_QUALITY_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        data = response.json()
-        decision = normalize_decision(extract_json_object(data.get("response", "{}")))
+        last_error = None
+        decision = None
+
+        for attempt in range(1, attempts + 1):
+            try:
+                if ollama_uses_chat_endpoint():
+                    response = requests.post(
+                        OLLAMA_URL,
+                        json=chat_payload,
+                        timeout=timeout_seconds,
+                    )
+                else:
+                    response = requests.post(
+                        OLLAMA_URL,
+                        json=request_payload,
+                        timeout=timeout_seconds,
+                    )
+                response.raise_for_status()
+                data = response.json()
+                raw_json_string = extract_ollama_text(data)
+                if not raw_json_string and not ollama_uses_chat_endpoint():
+                    chat_response = requests.post(
+                        ollama_chat_url(),
+                        json=chat_payload,
+                        timeout=timeout_seconds,
+                    )
+                    chat_response.raise_for_status()
+                    chat_data = chat_response.json()
+                    raw_json_string = extract_ollama_text(chat_data)
+                if not raw_json_string:
+                    raise RuntimeError("Ollama returned empty response content.")
+                decision = normalize_decision(extract_json_object(raw_json_string))
+                record_llm_metric(
+                    source="signal_quality_filter",
+                    task="quality_gate",
+                    model=OLLAMA_MODEL,
+                    duration_seconds=time.perf_counter() - started_at,
+                    success=True,
+                    endpoint=endpoint_label,
+                    item_count=1,
+                    batch_size=1,
+                    attempts=attempt,
+                    timeout_seconds=timeout_seconds,
+                    num_predict=max(48, int(runtime["num_predict"])),
+                    prompt_chars=len(request_payload["prompt"]),
+                    response_chars=len(raw_json_string),
+                    extra={"ticker": ticker, "action": action},
+                )
+                break
+            except Exception as exc:
+                last_error = exc
+                if attempt < attempts:
+                    wait_seconds = backoff_seconds * attempt
+                    print(
+                        f"   Qwen quality gate retry {attempt}/{attempts - 1} "
+                        f"in {wait_seconds}s for {action} {ticker}..."
+                    )
+                    time.sleep(wait_seconds)
+                    continue
+                raise last_error
     except Exception as exc:
+        record_llm_metric(
+            source="signal_quality_filter",
+            task="quality_gate",
+            model=OLLAMA_MODEL,
+            duration_seconds=time.perf_counter() - started_at,
+            success=False,
+            endpoint=endpoint_label,
+            item_count=1,
+            batch_size=1,
+            attempts=attempt or attempts,
+            timeout_seconds=timeout_seconds,
+            num_predict=max(48, int(runtime["num_predict"])),
+            prompt_chars=len(request_payload["prompt"]),
+            response_chars=len(raw_json_string),
+            error=exc,
+            extra={"ticker": ticker, "action": action},
+        )
         if SIGNAL_QUALITY_FAIL_OPEN:
             decision = dict(DEFAULT_DECISION)
             decision.update(

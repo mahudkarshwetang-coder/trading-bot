@@ -8,10 +8,16 @@ import requests
 
 from config import (
     DRY_RUN,
+    ENTRY_ORDER_TYPE,
     FIXED_ORDER_QUANTITY,
     IBKR_HOST,
+    IBKR_NEWS_CLIENT_ID,
     IBKR_PORT,
+    OLLAMA_MODEL,
     OLLAMA_URL,
+    PERFORMANCE_GAMING_CPU_BUDGET_PCT,
+    PERFORMANCE_GAMING_EXTERNAL_PRIORITY,
+    PERFORMANCE_GAMING_PROCESS_PRIORITY,
     SUPABASE_KEY,
     SUPABASE_URL,
     get_supabase_client,
@@ -23,9 +29,16 @@ REQUIRED_ENV = ["SUPABASE_URL", "SUPABASE_KEY"]
 OPTIONAL_ENV = [
     "DRY_RUN",
     "FIXED_ORDER_QUANTITY",
+    "ENTRY_ORDER_TYPE",
+    "BRACKET_STOP_LOSS_PCT",
+    "BRACKET_TAKE_PROFIT_PCT",
+    "BUY_REENTRY_DIP_PCT",
     "IBKR_HOST",
     "IBKR_PORT",
     "IBKR_CLIENT_ID",
+    "IBKR_SYNC_CLIENT_ID",
+    "IBKR_CONTEXT_CLIENT_ID",
+    "IBKR_NEWS_CLIENT_ID",
     "MAX_DRAWDOWN_PCT",
     "MARKET_TIMEZONE",
     "PREMARKET_OPEN",
@@ -42,12 +55,70 @@ OPTIONAL_ENV = [
     "ALLOW_GLOBAL_OVERNIGHT_TRADING",
     "OLLAMA_URL",
     "OLLAMA_MODEL",
+    "PERFORMANCE_GOVERNOR_ENABLED",
+    "PERFORMANCE_MODE",
+    "PERFORMANCE_GAME_PROCESS_NAMES",
+    "PERFORMANCE_BUSY_CPU_PCT",
+    "PERFORMANCE_LOW_MEMORY_GB",
+    "PERFORMANCE_PROFILE_TTL_SECONDS",
+    "PERFORMANCE_GAMING_KEEP_ALIVE",
+    "PERFORMANCE_GAMING_TIMEOUT_SECONDS",
+    "PERFORMANCE_GAMING_MAX_NUM_PREDICT",
+    "PERFORMANCE_GAMING_MAX_BATCH_SIZE",
+    "PERFORMANCE_GAMING_MAX_LLM_ITEMS",
+    "PERFORMANCE_GAMING_MAX_WORKERS",
+    "PERFORMANCE_GAMING_MAX_LLM_TICKERS",
+    "PERFORMANCE_GAMING_INTERVAL_MULTIPLIER",
+    "PERFORMANCE_GAMING_CPU_BUDGET_PCT",
+    "PERFORMANCE_GAMING_THROTTLE_ENABLED",
+    "PERFORMANCE_GAMING_THROTTLE_MIN_SLEEP_SECONDS",
+    "PERFORMANCE_GAMING_THROTTLE_MAX_SLEEP_SECONDS",
+    "PERFORMANCE_GAMING_PROCESS_PRIORITY",
+    "PERFORMANCE_GAMING_EXTERNAL_PRIORITY",
+    "PERFORMANCE_GAMING_EXTERNAL_PROCESSES",
+    "PERFORMANCE_RESTORE_PRIORITY_ON_NORMAL",
+    "PERFORMANCE_DEFER_TASKS",
+    "LLM_METRICS_ENABLED",
+    "LLM_METRICS_PATH",
+    "LLM_SCANNER_TIMEOUT_SECONDS",
+    "LLM_SCANNER_RETRY_ATTEMPTS",
+    "LLM_SCANNER_RETRY_BACKOFF_SECONDS",
+    "LLM_SCANNER_NUM_PREDICT",
+    "LLM_SCANNER_KEEP_ALIVE",
+    "LLM_SCANNER_RULES_MAX_CHARS",
+    "LLM_SCANNER_MAX_TICKERS",
+    "LLM_SCANNER_MAX_CONSECUTIVE_FAILURES",
     "SIGNAL_QUALITY_FILTER_ENABLED",
     "SIGNAL_QUALITY_MIN_SCORE",
     "SIGNAL_QUALITY_TIMEOUT_SECONDS",
     "SIGNAL_QUALITY_FAIL_OPEN",
+    "SIGNAL_QUALITY_NUM_PREDICT",
+    "SIGNAL_QUALITY_RETRY_ATTEMPTS",
+    "SIGNAL_QUALITY_RETRY_BACKOFF_SECONDS",
+    "SIGNAL_QUALITY_KEEP_ALIVE",
+    "EXECUTION_GATE_ENABLED",
+    "EXECUTION_GATE_MIN_SCORE",
+    "EXECUTION_GATE_FAIL_OPEN",
+    "EXECUTION_GATE_TIMEOUT_SECONDS",
+    "EXECUTION_GATE_NUM_PREDICT",
+    "EXECUTION_GATE_RETRY_ATTEMPTS",
+    "EXECUTION_GATE_RETRY_BACKOFF_SECONDS",
+    "EXECUTION_GATE_KEEP_ALIVE",
     "SCANNER_INTERVAL_SECONDS",
     "SIGNAL_COOLDOWN_MINUTES",
+    "OPEN_SCANNER_ENABLED",
+    "OPEN_SCANNER_START",
+    "OPEN_SCANNER_END",
+    "OPEN_SCANNER_MINUTES_AFTER_OPEN",
+    "OPEN_SCANNER_MAX_TICKERS",
+    "OPEN_SCANNER_MIN_PRICE",
+    "OPEN_SCANNER_MIN_RVOL",
+    "OPEN_SCANNER_MIN_MOVE_PCT",
+    "OPEN_SCANNER_MIN_RECOVERY_PCT",
+    "OPEN_SCANNER_MIN_CONFIDENCE",
+    "OPEN_SCANNER_COOLDOWN_MINUTES",
+    "SYNC_BROKER_AFTER_ORDER",
+    "SYNC_BROKER_AFTER_ORDER_DELAY_SECONDS",
     "CATEGORY_UNIVERSE_LIMIT",
     "CATEGORY_MIN_SCORE",
     "CATEGORY_TARGET_LIMIT",
@@ -57,9 +128,33 @@ OPTIONAL_ENV = [
     "TECH_NEWS_MAX_WORKERS",
     "TECH_NEWS_LIMIT_PER_TICKER",
     "TECH_NEWS_OUTPUT_PATH",
+    "TECH_NEWS_RELEVANCE_FILTER_ENABLED",
+    "TECH_NEWS_RELEVANCE_MIN_SCORE",
     "TECH_NEWS_LLM_ENABLED",
     "TECH_NEWS_LLM_MAX_ITEMS",
     "TECH_NEWS_LLM_TIMEOUT_SECONDS",
+    "TECH_NEWS_LLM_BATCH_SIZE",
+    "TECH_NEWS_LLM_NUM_PREDICT",
+    "TECH_NEWS_LLM_NUM_PREDICT_PER_ITEM",
+    "TECH_NEWS_LLM_SINGLE_TIMEOUT_SECONDS",
+    "TECH_NEWS_LLM_SINGLE_NUM_PREDICT",
+    "TECH_NEWS_LLM_DEFAULT_RETRY_LIMIT",
+    "TECH_NEWS_LLM_RETRY_ATTEMPTS",
+    "TECH_NEWS_LLM_RETRY_BACKOFF_SECONDS",
+    "TECH_NEWS_LLM_KEEP_ALIVE",
+    "TECH_NEWS_LLM_WARMUP",
+    "IBKR_NEWS_ENABLED",
+    "IBKR_NEWS_PROVIDERS",
+    "IBKR_NEWS_LOOKBACK_MINUTES",
+    "IBKR_NEWS_INTERVAL_SECONDS",
+    "IBKR_NEWS_MAX_TICKERS",
+    "IBKR_NEWS_RESULTS_PER_TICKER",
+    "IBKR_NEWS_MIN_CONFIDENCE",
+    "IBKR_NEWS_MIN_DIRECTIONAL_SCORE",
+    "IBKR_NEWS_COOLDOWN_MINUTES",
+    "IBKR_NEWS_OUTPUT_PATH",
+    "IBKR_NEWS_SEEN_PATH",
+    "IBKR_NEWS_PUSH_SIGNALS",
     "MARKET_BRIEFING_LOOKBACK_HOURS",
     "MARKET_BRIEFING_NEWS_LIMIT",
     "MARKET_BRIEFING_SIGNAL_LIMIT",
@@ -74,6 +169,16 @@ OPTIONAL_ENV = [
     "POST_TRADE_REVIEW_TIMEOUT_SECONDS",
     "POST_TRADE_REVIEW_OUTPUT_PATH",
     "POST_TRADE_REVIEW_PUSH_SUPABASE",
+    "STRATEGY_OPTIMIZER_LOOKBACK_DAYS",
+    "STRATEGY_OPTIMIZER_HORIZON",
+    "STRATEGY_OPTIMIZER_MIN_EVALUATED_SIGNALS",
+    "STRATEGY_OPTIMIZER_MIN_CHANNEL_SIGNALS",
+    "STRATEGY_OPTIMIZER_MIN_CONFIDENCE_FLOOR",
+    "STRATEGY_OPTIMIZER_MIN_CONFIDENCE_CEILING",
+    "STRATEGY_OPTIMIZER_MAX_STEP",
+    "STRATEGY_OPTIMIZER_OUTPUT_PATH",
+    "STRATEGY_OPTIMIZER_PUSH_SUPABASE",
+    "STRATEGY_OPTIMIZER_AUTO_APPLY",
     "MASSIVE_API_KEY",
 ]
 
@@ -137,8 +242,36 @@ def check_env(report):
 
     report.ok("DRY_RUN", "ON" if DRY_RUN else "OFF")
     report.ok("FIXED_ORDER_QUANTITY", str(FIXED_ORDER_QUANTITY))
+    report.ok("ENTRY_ORDER_TYPE", ENTRY_ORDER_TYPE)
     if not DRY_RUN:
         report.warn("live trading mode", "DRY_RUN is false; main.py can place IBKR orders")
+
+
+def check_env_file_consistency(report):
+    env_path = ROOT / ".env"
+    if not env_path.exists():
+        return
+
+    key_counts = {}
+    try:
+        with env_path.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key = line.split("=", 1)[0].strip()
+                if not key:
+                    continue
+                key_counts[key] = key_counts.get(key, 0) + 1
+    except Exception:
+        return
+
+    duplicates = sorted(key for key, count in key_counts.items() if count > 1)
+    if duplicates:
+        sample = ", ".join(duplicates[:8])
+        if len(duplicates) > 8:
+            sample = f"{sample}, +{len(duplicates) - 8} more"
+        report.warn(".env duplicates", f"duplicate keys found (last value wins): {sample}")
 
 
 def check_dependencies(report):
@@ -224,6 +357,12 @@ def check_supabase(report):
             report.ok("Supabase post_trade_reviews", f"{len(post_trade.data or [])} sample row(s)")
         except Exception:
             report.warn("Supabase post_trade_reviews", "missing; run supabase/post_trade_reviews.sql for Qwen trade coaching")
+
+        try:
+            optimizer_runs = supabase.table("strategy_optimizer_runs").select("run_at").limit(1).execute()
+            report.ok("Supabase strategy_optimizer_runs", f"{len(optimizer_runs.data or [])} sample row(s)")
+        except Exception:
+            report.warn("Supabase strategy_optimizer_runs", "missing; run supabase/strategy_optimizer_runs.sql for optimizer history")
     except Exception as exc:
         report.fail("Supabase", str(exc))
 
@@ -246,10 +385,55 @@ def check_ollama(report):
         if response.status_code == 200:
             models = response.json().get("models", [])
             report.ok("Ollama", f"reachable; {len(models)} model(s) listed")
+            configured = str(OLLAMA_MODEL or "").strip().lower()
+            installed_names = {
+                str(model.get("name") or "").strip().lower()
+                for model in models
+                if isinstance(model, dict)
+            }
+            if configured:
+                has_exact = configured in installed_names
+                base_name = configured.split(":", 1)[0]
+                has_family = any(name.split(":", 1)[0] == base_name for name in installed_names)
+                if has_exact or has_family:
+                    report.ok("Ollama model", f"configured model available: {OLLAMA_MODEL}")
+                else:
+                    report.warn(
+                        "Ollama model",
+                        f"configured model not found: {OLLAMA_MODEL} (installed: {', '.join(sorted(installed_names)) or 'none'})",
+                    )
+            endpoint_path = urlparse(OLLAMA_URL).path.rstrip("/").lower()
+            if configured.startswith("qwen3") and endpoint_path.endswith("/api/generate"):
+                report.warn(
+                    "Ollama endpoint",
+                    "qwen3 models are usually more stable on /api/chat; consider OLLAMA_URL=http://localhost:11434/api/chat",
+                )
         else:
             report.warn("Ollama", f"reachable but returned HTTP {response.status_code}")
     except Exception as exc:
         report.warn("Ollama", f"not reachable at {tags_url}: {exc}")
+
+
+def check_performance_governor(report):
+    try:
+        from performance_governor import current_performance_profile, describe_performance_profile
+
+        profile = current_performance_profile(force_refresh=True)
+        label = "active" if profile.active else "normal"
+        details = describe_performance_profile(profile)
+        if profile.active:
+            details += (
+                f"; budget {PERFORMANCE_GAMING_CPU_BUDGET_PCT:g}%"
+                f"; priority python={PERFORMANCE_GAMING_PROCESS_PRIORITY}"
+                f"/ollama={PERFORMANCE_GAMING_EXTERNAL_PRIORITY}"
+            )
+        if profile.cpu_pct is not None:
+            details += f"; CPU {profile.cpu_pct:.0f}%"
+        if profile.free_memory_gb is not None:
+            details += f"; free RAM {profile.free_memory_gb:.1f}GB"
+        report.ok("performance governor", f"{label}: {details}")
+    except Exception as exc:
+        report.warn("performance governor", f"status unavailable: {exc}")
 
 
 def check_ibkr_port(report):
@@ -260,17 +444,40 @@ def check_ibkr_port(report):
         report.warn("IBKR socket", f"{IBKR_HOST}:{IBKR_PORT} not reachable: {exc}")
 
 
+def check_ibkr_news_providers(report):
+    try:
+        from ib_insync import IB
+
+        ib = IB()
+        try:
+            ib.connect(IBKR_HOST, IBKR_PORT, clientId=IBKR_NEWS_CLIENT_ID + 100, timeout=5, readonly=True)
+            providers = ib.reqNewsProviders()
+            if providers:
+                codes = ", ".join(f"{provider.code}:{provider.name}" for provider in providers)
+                report.ok("IBKR news providers", codes)
+            else:
+                report.warn("IBKR news providers", "none returned by TWS/API")
+        finally:
+            if ib.isConnected():
+                ib.disconnect()
+    except Exception as exc:
+        report.warn("IBKR news providers", f"not available: {exc}")
+
+
 def main():
     report = HealthReport()
     print("Alpha Engine Health Check")
     print("=" * 32)
 
     check_env(report)
+    check_env_file_consistency(report)
     check_dependencies(report)
     check_local_assets(report)
     check_supabase(report)
     check_ollama(report)
+    check_performance_governor(report)
     check_ibkr_port(report)
+    check_ibkr_news_providers(report)
 
     print("=" * 32)
     if report.failures:

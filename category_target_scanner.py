@@ -10,7 +10,17 @@ from config import (
 
 supabase = get_supabase_client()
 
-DEFAULT_CATEGORIES = ["Energy", "Logistics", "Infrastructure", "Materials"]
+DEFAULT_CATEGORIES = [
+    "Nuclear Energy",
+    "Data Center Power & Grid Infrastructure",
+    "AI Chips",
+    "Cybersecurity & AI Security",
+    "Aerospace Defense & Security",
+    "Energy",
+    "Logistics",
+    "Infrastructure",
+    "Materials",
+]
 SETUP_MESSAGE = (
     "Missing Supabase table: public.category_universe. "
     "Run supabase/category_universe.sql in the Supabase SQL editor, then run "

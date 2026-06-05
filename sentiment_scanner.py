@@ -79,7 +79,7 @@ def fetch_and_analyze_news(ticker):
 def push_signal_to_ipad(ticker, action, score, headlines):
     """Formats the NLP memo and uploads it to Supabase."""
     # Convert sentiment score (-1 to 1) into a confidence percentage
-    confidence = abs(score)
+    confidence = round(abs(score) * 100.0, 2)
     
     # Format the AI Memo with the actual headlines it read
     memo_bullets = "\n- ".join(headlines)

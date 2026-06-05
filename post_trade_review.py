@@ -1,9 +1,12 @@
 import argparse
 import csv
 import json
+import re
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
@@ -19,6 +22,7 @@ from config import (
     SIGNAL_JOURNAL_PATH,
     get_supabase_client,
 )
+from llm_metrics import record_llm_metric
 
 HORIZONS = ["15m", "1h", "1d", "5d"]
 PREFERRED_HORIZON_ORDER = ["1d", "5d", "1h", "15m"]
@@ -76,11 +80,11 @@ def missing_table(exc, table_name):
 
 
 def extract_json_object(text):
-    cleaned = (text or "").strip()
+    cleaned = str(text or "").strip()
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.IGNORECASE | re.DOTALL).strip()
     if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        if cleaned.lower().startswith("json"):
-            cleaned = cleaned[4:].strip()
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
@@ -89,6 +93,32 @@ def extract_json_object(text):
         if start >= 0 and end > start:
             return json.loads(cleaned[start:end + 1])
         raise
+
+
+def ollama_chat_url():
+    parsed = urlsplit(OLLAMA_URL)
+    if not parsed.scheme or not parsed.netloc:
+        return "http://localhost:11434/api/chat"
+    return urlunsplit((parsed.scheme, parsed.netloc, "/api/chat", "", ""))
+
+
+def ollama_uses_chat_endpoint():
+    parsed = urlsplit(OLLAMA_URL)
+    return parsed.path.rstrip("/").lower().endswith("/api/chat")
+
+
+def extract_ollama_text(response_data):
+    if not isinstance(response_data, dict):
+        return ""
+    response_text = str(response_data.get("response") or "").strip()
+    if response_text:
+        return response_text
+    message = response_data.get("message")
+    if isinstance(message, dict):
+        content_text = str(message.get("content") or "").strip()
+        if content_text:
+            return content_text
+    return ""
 
 
 def choose_horizon(journal_row, preferred=POST_TRADE_REVIEW_HORIZON):
@@ -247,18 +277,77 @@ Return strict JSON:
 
 
 def ask_qwen_review(signal, journal_row, entry_price, exit_price, pnl_pct, horizon):
+    prompt = build_prompt(signal, journal_row, entry_price, exit_price, pnl_pct, horizon)
     payload = {
         "model": OLLAMA_MODEL,
-        "prompt": build_prompt(signal, journal_row, entry_price, exit_price, pnl_pct, horizon),
+        "prompt": prompt,
         "format": "json",
         "stream": False,
+        "think": False,
         "options": {"temperature": 0.0},
     }
-    response = requests.post(OLLAMA_URL, json=payload, timeout=POST_TRADE_REVIEW_TIMEOUT_SECONDS)
-    response.raise_for_status()
-    data = response.json()
-    parsed = extract_json_object(data.get("response", "{}"))
-    return normalize_review(parsed), parsed
+    chat_payload = {
+        "model": payload["model"],
+        "messages": [{"role": "user", "content": payload["prompt"]}],
+        "format": payload["format"],
+        "stream": False,
+        "think": False,
+        "options": payload["options"],
+    }
+    started_at = time.perf_counter()
+    endpoint_label = "chat" if ollama_uses_chat_endpoint() else "generate"
+    raw_json_string = ""
+    ticker = signal.get("ticker")
+    try:
+        if ollama_uses_chat_endpoint():
+            response = requests.post(OLLAMA_URL, json=chat_payload, timeout=POST_TRADE_REVIEW_TIMEOUT_SECONDS)
+        else:
+            response = requests.post(OLLAMA_URL, json=payload, timeout=POST_TRADE_REVIEW_TIMEOUT_SECONDS)
+        response.raise_for_status()
+        data = response.json()
+        raw_json_string = extract_ollama_text(data)
+        if not raw_json_string and not ollama_uses_chat_endpoint():
+            chat_response = requests.post(ollama_chat_url(), json=chat_payload, timeout=POST_TRADE_REVIEW_TIMEOUT_SECONDS)
+            chat_response.raise_for_status()
+            chat_data = chat_response.json()
+            raw_json_string = extract_ollama_text(chat_data)
+        if not raw_json_string:
+            raise RuntimeError("Ollama returned empty response content.")
+        parsed = extract_json_object(raw_json_string)
+        record_llm_metric(
+            source="post_trade_review",
+            task="trade_review",
+            model=OLLAMA_MODEL,
+            duration_seconds=time.perf_counter() - started_at,
+            success=True,
+            endpoint=endpoint_label,
+            item_count=1,
+            batch_size=1,
+            attempts=1,
+            timeout_seconds=POST_TRADE_REVIEW_TIMEOUT_SECONDS,
+            prompt_chars=len(prompt),
+            response_chars=len(raw_json_string),
+            extra={"ticker": ticker, "horizon": horizon},
+        )
+        return normalize_review(parsed), parsed
+    except Exception as exc:
+        record_llm_metric(
+            source="post_trade_review",
+            task="trade_review",
+            model=OLLAMA_MODEL,
+            duration_seconds=time.perf_counter() - started_at,
+            success=False,
+            endpoint=endpoint_label,
+            item_count=1,
+            batch_size=1,
+            attempts=1,
+            timeout_seconds=POST_TRADE_REVIEW_TIMEOUT_SECONDS,
+            prompt_chars=len(prompt),
+            response_chars=len(raw_json_string),
+            error=exc,
+            extra={"ticker": ticker, "horizon": horizon},
+        )
+        raise
 
 
 def build_review_record(signal, journal_row, review, raw_payload, entry_price, exit_price, pnl_pct, horizon):
