@@ -703,6 +703,40 @@ python ticker_intelligence.py --ticker NVDA --dry-run --no-push-supabase
 
 `master_scanner.py ticker-intel` runs the same job, and `daily-cycle` now includes this step so the iPad search table stays fresh each day.
 
+## Live Wealthsimple Holdings Watch
+
+SignalCenter can track stocks you own outside IBKR, such as a live Wealthsimple account. This is manual-entry by design: add ticker, share count, average cost, optional company name, and notes in the iPad Holdings tab. The app reads current Yahoo quote snapshots, shows open P/L against your cost basis, and displays the latest `ticker_intelligence` news/catalyst rows for each owned ticker.
+
+Run this SQL once in Supabase:
+
+```sql
+-- supabase/live_holdings.sql
+```
+
+After adding holdings in SignalCenter, refresh the research snapshots:
+
+```powershell
+python ticker_intelligence.py
+```
+
+The ticker intelligence watchlist now includes active rows from `public.live_holdings`, so `python master_scanner.py ticker-intel` and the daily cycle also keep owned-stock research refreshed.
+
+## GitHub Repo Sync
+
+Use `repo_sync.py` to checkpoint both local repos (`Trading Bot` and sibling `SignalCenter`) to GitHub:
+
+```powershell
+python repo_sync.py push
+```
+
+Run it in watch mode for slower background syncing:
+
+```powershell
+python repo_sync.py watch --interval 300
+```
+
+The helper stages only safe changed paths, skips secrets and generated runtime folders, and refuses to include `strategy_vault/00_daily_macro_state.txt` when it contains broken `nan%` macro values. Trading Bot runs lightweight Python compile checks before committing. SignalCenter Swift builds still need final validation on the Mac/Xcode side.
+
 ## Analytics Event History
 
 The iPad Metrics tab can read execution outcome events from Supabase. Run this SQL once to enable that table:

@@ -364,6 +364,12 @@ def check_supabase(report):
             report.ok("Supabase strategy_optimizer_runs", f"{len(optimizer_runs.data or [])} sample row(s)")
         except Exception:
             report.warn("Supabase strategy_optimizer_runs", "missing; run supabase/strategy_optimizer_runs.sql for optimizer history")
+
+        try:
+            live_holdings = supabase.table("live_holdings").select("ticker,broker").limit(1).execute()
+            report.ok("Supabase live_holdings", f"{len(live_holdings.data or [])} sample row(s)")
+        except Exception:
+            report.warn("Supabase live_holdings", "missing; run supabase/live_holdings.sql for Wealthsimple holdings watch")
     except Exception as exc:
         report.fail("Supabase", str(exc))
 

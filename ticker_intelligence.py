@@ -891,6 +891,17 @@ def load_watchlist_tickers(supabase, limit):
         except Exception as exc:
             print(f"Supabase watchlist load skipped: {exc}")
 
+        try:
+            response = (
+                supabase.table("live_holdings")
+                .select("ticker")
+                .eq("active", True)
+                .execute()
+            )
+            tickers.extend([str(row.get("ticker", "")).upper() for row in (response.data or []) if str(row.get("ticker", "")).strip()])
+        except Exception as exc:
+            print(f"Live holdings load skipped: {exc}")
+
     normalized = [normalize_ticker(ticker) for ticker in tickers]
     normalized = [ticker for ticker in normalized if ticker]
     return ordered_unique(normalized)[: max(1, int(limit))]
