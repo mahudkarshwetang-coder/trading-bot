@@ -306,6 +306,16 @@ def check_local_assets(report):
             report.ok("strategy_vault", f"{len(docs)} strategy document(s)")
         else:
             report.warn("strategy_vault", "no .txt or .md strategy documents found")
+
+        macro_state = vault / "00_daily_macro_state.txt"
+        if macro_state.exists():
+            macro_text = macro_state.read_text(encoding="utf-8", errors="replace").lower()
+            if "nan%" in macro_text:
+                report.warn("macro state", "contains invalid nan% values; rerun macro_scanner.py after data source recovers")
+            elif "validation:" in macro_text:
+                report.ok("macro state", "finite sector validation marker found")
+            else:
+                report.warn("macro state", "missing finite validation marker; rerun macro_scanner.py")
     else:
         report.warn("strategy_vault", "missing; llm_scanner.py will create it")
 
