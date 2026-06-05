@@ -164,12 +164,9 @@ def record_trade_event(signal, event_type, status=None, price=None, quantity=Non
             return
         print(f"⚠️ Trade event write skipped for {payload['ticker']}: {exc}")
 
-def sync_broker_snapshot_after_order(ticker, action):
-    """Best-effort broker position sync for the iPad Ledger after a live order is sent."""
-    if not SYNC_BROKER_AFTER_ORDER:
-        return
-
-    delay = max(0.0, float(SYNC_BROKER_AFTER_ORDER_DELAY_SECONDS or 0.0))
+def sync_broker_snapshot(label="manual request", delay_seconds=0.0):
+    """Best-effort broker position sync for the iPad Ledger."""
+    delay = max(0.0, float(delay_seconds or 0.0))
     if delay:
         print(f"   Broker sync queued in {delay:.1f}s so IBKR can update positions...")
         ib.sleep(delay)
@@ -177,15 +174,28 @@ def sync_broker_snapshot_after_order(ticker, action):
     try:
         from broker_sync import sync_once
 
-        print(f"   Syncing IBKR broker snapshot to Supabase after {action} {ticker}...")
+        print(f"   Syncing IBKR broker snapshot to Supabase ({label})...")
         sync_once(
             ib,
             supabase,
             mark_signals=False,
             dry_run=False,
         )
+        return True
     except Exception as exc:
-        print(f"Post-order broker sync skipped for {ticker}: {exc}")
+        print(f"Broker sync skipped ({label}): {exc}")
+        return False
+
+
+def sync_broker_snapshot_after_order(ticker, action):
+    """Best-effort broker position sync for the iPad Ledger after a live order is sent."""
+    if not SYNC_BROKER_AFTER_ORDER:
+        return False
+
+    return sync_broker_snapshot(
+        label=f"after {action} {ticker}",
+        delay_seconds=SYNC_BROKER_AFTER_ORDER_DELAY_SECONDS,
+    )
 
 
 def current_position_quantity(ticker):
@@ -611,6 +621,10 @@ def listen_for_commands():
                     subprocess.run(["python", "llm_scanner.py"])
                     subprocess.run(["python", "context_enrichment.py"])
                     supabase.table("bot_settings").update({"force_scanner": False}).eq("id", 1).execute()
+                if settings.get("force_broker_sync"):
+                    print("\n🔄 IPAD OVERRIDE: Manual IBKR ledger sync requested.")
+                    sync_broker_snapshot(label="iPad manual ledger sync")
+                    supabase.table("bot_settings").update({"force_broker_sync": False}).eq("id", 1).execute()
 
             # 3. --- TRADE EXECUTION LISTENER ---
             # This catches BOTH auto-approved BUYs and manually approved SELLs from the iPad
