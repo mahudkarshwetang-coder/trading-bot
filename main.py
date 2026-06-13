@@ -1,5 +1,9 @@
 import time
 import math
+import socket
+import sys
+import os
+import subprocess
 import yfinance as yf
 from datetime import datetime, timedelta, timezone
 from ib_insync import IB, LimitOrder, MarketOrder, Stock, StopOrder
@@ -30,6 +34,12 @@ from market_session import get_market_session, now_market_time, parse_time
 from script_launcher import launch_script_key
 from system_status import publish_system_status
 
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 # --- CONFIGURATION & SECURITY ---
 try:
     supabase = get_supabase_client()
@@ -37,6 +47,8 @@ except RuntimeError as exc:
     print(f"CRITICAL: {exc}")
     exit(1)
 ib = IB()
+BRIDGE_LOCK_SOCKET = None
+BRIDGE_LOCK_PORT = 47610
 
 # Global variable to hold our PnL subscription
 account_pnl = None
@@ -47,6 +59,73 @@ EXTENDED_HOURS_BLOCK_STATUS = "blocked_extended_hours"
 GLOBAL_OVERNIGHT_BLOCK_STATUS = "blocked_global_overnight"
 REBUY_DIP_BLOCK_STATUS = "blocked_rebuy_no_dip"
 EXECUTION_GATE_BLOCK_STATUS = "blocked_execution_gate"
+
+
+def acquire_execution_bridge_lock():
+    """Keep only one local execution bridge active to prevent duplicate routing."""
+    global BRIDGE_LOCK_SOCKET
+    existing_pids = running_execution_bridge_pids()
+    if existing_pids:
+        print(f"Execution Bridge already appears to be running on this PC (pid(s): {', '.join(existing_pids)}).")
+        print("Leave the existing bridge open, or close its PowerShell window before starting another one.")
+        publish_system_status(
+            "execution_bridge",
+            "duplicate_blocked",
+            detail="Duplicate execution bridge launch blocked because another main.py process is running.",
+            metadata={"existing_pids": existing_pids},
+        )
+        return False
+
+    lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    lock_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        lock_socket.bind(("127.0.0.1", BRIDGE_LOCK_PORT))
+        lock_socket.listen(1)
+        BRIDGE_LOCK_SOCKET = lock_socket
+        return True
+    except OSError:
+        lock_socket.close()
+        print(
+            "Execution Bridge already appears to be running on this PC "
+            f"(local lock port {BRIDGE_LOCK_PORT} is in use)."
+        )
+        print("Leave the existing bridge open, or close its PowerShell window before starting another one.")
+        publish_system_status(
+            "execution_bridge",
+            "duplicate_blocked",
+            detail="Duplicate execution bridge launch blocked by local single-instance guard.",
+            metadata={"lock_port": BRIDGE_LOCK_PORT},
+        )
+        return False
+
+
+def running_execution_bridge_pids():
+    """Return other python main.py process IDs on Windows, best-effort."""
+    if os.name != "nt":
+        return []
+    command = (
+        "$pidSelf = "
+        + str(os.getpid())
+        + "; Get-CimInstance Win32_Process -Filter \"name = 'python.exe'\" "
+        "| Where-Object { $_.ProcessId -ne $pidSelf -and $_.CommandLine -match '(^|\\s)main\\.py(\\s|$)' } "
+        "| ForEach-Object { $_.ProcessId }"
+    )
+    try:
+        completed = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception:
+        return []
+    pids = []
+    for line in completed.stdout.splitlines():
+        value = line.strip()
+        if value.isdigit():
+            pids.append(value)
+    return pids
 
 def utc_now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -257,6 +336,17 @@ def connect_to_broker():
             print(f"🛡️ Global Circuit Breaker Armed on account: {accounts[0]}")
             
     except Exception as e:
+        if "client id is already in use" in str(e).lower() or "clientid" in str(e).lower():
+            print("Execution Bridge already appears to be connected to TWS with this client ID.")
+            print("Do not start a second bridge; use the existing bridge window or close it before restarting.")
+            publish_system_status(
+                "execution_bridge",
+                "duplicate_blocked",
+                detail="Duplicate execution bridge launch blocked because the IBKR client ID is already in use.",
+                error=str(e),
+                metadata={"host": IBKR_HOST, "port": IBKR_PORT, "client_id": IBKR_CLIENT_ID},
+            )
+            raise SystemExit(0)
         print(f"🚨 Broker Connection Failed: {e}")
         publish_system_status(
             "execution_bridge",
@@ -770,6 +860,9 @@ def listen_for_commands():
         time.sleep(2)
 
 if __name__ == "__main__":
+    if not acquire_execution_bridge_lock():
+        raise SystemExit(0)
+
     print("⚡ Starting Alpha Engine Order Routing Bridge [BRACKET MODE - ARMED]")
     print(f"Training Safety: DRY_RUN is {'ON' if DRY_RUN else 'OFF'}")
     print(f"Fixed Order Quantity: {FIXED_ORDER_QUANTITY if FIXED_ORDER_QUANTITY > 0 else 'dynamic sizing'}")
