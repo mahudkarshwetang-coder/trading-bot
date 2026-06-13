@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from config import EXPERIMENTAL_LOCAL_LOG_PATH, get_supabase_client
 from local_data_recorder import append_local_event
+from signal_source_hub import latest_source_run
 from system_status import publish_system_status
 
 
@@ -30,6 +31,20 @@ def latest_experimental_result(supabase):
     return result if isinstance(result, dict) else {}
 
 
+def compact_source_summary(source_run):
+    if not isinstance(source_run, dict) or not source_run:
+        return {}
+    return {
+        "generated_at": source_run.get("generated_at"),
+        "source_counts": source_run.get("source_counts") or {},
+        "candidate_count": source_run.get("candidate_count") or 0,
+        "overlap_count": source_run.get("overlap_count") or 0,
+        "overlap_tickers": (source_run.get("overlap_tickers") or [])[:40],
+        "warnings": (source_run.get("warnings") or [])[:10],
+        "top_candidates": (source_run.get("top_candidates") or [])[:20],
+    }
+
+
 def build_findings(result):
     outcomes = result.get("outcomes") if isinstance(result.get("outcomes"), list) else []
     candidates = [row for row in outcomes if row.get("status") in {"candidate", "dry_run", "sent"}]
@@ -50,6 +65,8 @@ def build_findings(result):
     if result.get("sent", 0) >= 20 and result.get("status") == "success":
         automation_reason = "execution sample exists, but keep manual review until post-trade reviews confirm edge"
 
+    source_summary = compact_source_summary(latest_source_run())
+
     return {
         "generated_at": utc_now_iso(),
         "source": SOURCE,
@@ -66,6 +83,7 @@ def build_findings(result):
         ],
         "automation_ready": enough_to_automate,
         "automation_reason": automation_reason,
+        "source_summary": source_summary,
         "next_step": (
             "Review the candidate list on iPad, then run experimental-execute if the basket looks acceptable."
             if candidates
@@ -77,6 +95,8 @@ def build_findings(result):
 def publish_findings(supabase, result, findings, dry_run=False):
     payload = dict(result or {})
     payload["findings"] = findings
+    if findings.get("source_summary"):
+        payload["source_summary"] = findings["source_summary"]
     append_local_event(
         "experimental_findings_generated",
         findings,
@@ -113,6 +133,7 @@ def run_experimental_findings(dry_run=False):
             "skipped_count": 0,
             "automation_ready": False,
             "automation_reason": "no experimental basket has been built yet",
+            "source_summary": compact_source_summary(latest_source_run()),
             "next_step": "Run experimental-build first.",
         }
     else:

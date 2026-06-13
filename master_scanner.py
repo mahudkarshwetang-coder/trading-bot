@@ -43,6 +43,7 @@ HEAVY_SCANNERS = {
 }
 HEAVY_OPERATIONS = {
     "category-universe": ("broad Yahoo category-universe rebuild", None),
+    "signal-sources": ("normalized source scan across Yahoo universe, IBKR scanner, and IBKR news", None),
     "ticker-intel": ("ticker intelligence dossier sync", "scanner"),
     "briefing": ("daily market briefing generation", "briefing"),
     "post-trade-review": ("Qwen post-trade review analysis", "post_trade_review"),
@@ -335,6 +336,12 @@ def run_ticker_intel(dry_run=False):
     return True
 
 
+def run_signal_sources(dry_run=False):
+    from signal_source_hub import run_signal_source_hub
+
+    return run_signal_source_hub(dry_run=dry_run, push_supabase=False)
+
+
 def run_runtime_config(dry_run=False):
     from runtime_config_sync import sync_runtime_config
 
@@ -420,6 +427,7 @@ OPERATIONS = {
     "briefing": run_briefing,
     "energy-universe": run_energy_universe,
     "category-universe": run_category_universe,
+    "signal-sources": run_signal_sources,
     "ticker-intel": run_ticker_intel,
     "runtime-config": run_runtime_config,
     "routing-status": run_routing_status,
@@ -445,6 +453,7 @@ WORKFLOWS = {
         "intraday",
         "ticker-intel",
         "context",
+        "signal-sources",
         "experimental-build",
         "experimental-findings",
         "briefing",
@@ -483,6 +492,7 @@ WORKFLOWS = {
         "runtime-config",
         "category-universe",
         "premarket",
+        "signal-sources",
         "intraday",
         "ticker-intel",
         "context",
@@ -496,6 +506,7 @@ WORKFLOWS = {
         "runtime-config",
         "category-universe",
         "category_premarket",
+        "signal-sources",
         "intraday",
         "context",
         "broker-sync",
@@ -814,6 +825,7 @@ def run_operation(name, dry_run=False, mark_missing_signals=BROKER_SYNC_MARK_MIS
             "briefing",
             "energy-universe",
             "category-universe",
+            "signal-sources",
             "ticker-intel",
             "runtime-config",
             "experimental",
