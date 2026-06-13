@@ -19,9 +19,10 @@ from config import (
     EXPERIMENTAL_MIN_MONTHLY_VOLATILITY_PCT,
     EXPERIMENTAL_ORDER_REF_PREFIX,
     EXPERIMENTAL_SESSION_DUPLICATE_GUARD,
+    EXPERIMENTAL_USE_IBKR_MARKET_DATA,
+    IBKR_EXPERIMENTAL_CLIENT_ID,
     IBKR_HOST,
     IBKR_PORT,
-    IBKR_PURE_TRAINING_CLIENT_ID,
     PURE_TRAINING_LOCAL_LOG_PATH,
     PURE_TRAINING_MAX_ACCOUNT_CAD,
     PURE_TRAINING_MAX_POSITION_PER_TICKER,
@@ -80,7 +81,7 @@ def load_shortlist(supabase):
         if rows and isinstance(rows[0].get("watchlist"), list):
             tickers.extend(rows[0]["watchlist"])
     except Exception as exc:
-        print(f"[PURE TRAINING] Supabase watchlist lookup skipped: {exc}")
+        print(f"[EXPERIMENTAL] Supabase watchlist lookup skipped: {exc}")
 
     if not tickers:
         target_path = Path("daily_targets.txt")
@@ -102,17 +103,30 @@ def load_shortlist(supabase):
 
 
 def connect_to_ibkr():
-    ib = IB()
-    ib.connect(
-        IBKR_HOST,
-        IBKR_PORT,
-        clientId=IBKR_PURE_TRAINING_CLIENT_ID,
-        readonly=False,
-        timeout=15,
-    )
-    ib.reqMarketDataType(4)
-    print(f"[PURE TRAINING] Connected to IBKR on {IBKR_HOST}:{IBKR_PORT}.")
-    return ib
+    last_error = None
+    for offset in range(10):
+        client_id = IBKR_EXPERIMENTAL_CLIENT_ID + offset
+        ib = IB()
+        try:
+            ib.connect(
+                IBKR_HOST,
+                IBKR_PORT,
+                clientId=client_id,
+                readonly=False,
+                timeout=15,
+            )
+            ib.reqMarketDataType(4)
+            print(f"[EXPERIMENTAL] Connected to IBKR on {IBKR_HOST}:{IBKR_PORT} with clientId={client_id}.")
+            return ib
+        except Exception as exc:
+            last_error = exc
+            try:
+                ib.disconnect()
+            except Exception:
+                pass
+            print(f"[EXPERIMENTAL] IBKR clientId={client_id} unavailable: {exc}")
+            time.sleep(0.5)
+    raise RuntimeError(f"Could not connect to IBKR using client IDs {IBKR_EXPERIMENTAL_CLIENT_ID}-{IBKR_EXPERIMENTAL_CLIENT_ID + 9}: {last_error}")
 
 
 def account_summary(ib):
@@ -202,31 +216,53 @@ def usd_to_cad(value):
     return float(value or 0.0) * max(0.0, float(PURE_TRAINING_USD_CAD_RATE or 0.0))
 
 
-def get_market_price(ib, contract):
+def get_yahoo_market_price(symbol):
     try:
-        ticker = ib.reqMktData(contract, "", False, False)
-        ib.sleep(1.0)
-        price = finite_float(ticker.marketPrice()) or finite_float(ticker.last) or finite_float(ticker.close)
-        ib.cancelMktData(contract)
-        if price and price > 0:
-            return price, "ibkr"
-    except Exception as exc:
-        print(f"[PURE TRAINING] IBKR price lookup failed for {contract.symbol}: {exc}")
-
-    try:
-        yf_ticker = yf.Ticker(contract.symbol)
+        yf_ticker = yf.Ticker(symbol)
         fast_info = getattr(yf_ticker, "fast_info", {}) or {}
         for key in ("last_price", "regular_market_price", "previous_close"):
             price = finite_float(fast_info.get(key) if hasattr(fast_info, "get") else None)
             if price and price > 0:
                 return price, f"yfinance:{key}"
-        history = yf_ticker.history(period="1d", interval="1m")
-        if not history.empty:
-            price = finite_float(history["Close"].dropna().iloc[-1])
-            if price and price > 0:
-                return price, "yfinance:history"
+
+        for period, interval in (("1d", "1m"), ("5d", "1d")):
+            history = yf_ticker.history(period=period, interval=interval)
+            if not history.empty and "Close" in history.columns:
+                price = finite_float(history["Close"].dropna().iloc[-1])
+                if price and price > 0:
+                    return price, f"yfinance:history:{period}:{interval}"
     except Exception as exc:
-        print(f"[PURE TRAINING] Yahoo fallback failed for {contract.symbol}: {exc}")
+        print(f"[EXPERIMENTAL] Yahoo price lookup failed for {symbol}: {exc}")
+    return None, None
+
+
+def get_ibkr_market_price(ib, contract):
+    ticker = None
+    try:
+        ticker = ib.reqMktData(contract, "", False, False)
+        ib.sleep(1.0)
+        price = finite_float(ticker.marketPrice()) or finite_float(ticker.last) or finite_float(ticker.close)
+        if price and price > 0:
+            return price, "ibkr"
+    except Exception as exc:
+        print(f"[EXPERIMENTAL] IBKR price lookup failed for {contract.symbol}: {exc}")
+    finally:
+        if ticker is not None:
+            try:
+                ib.cancelMktData(contract)
+            except Exception:
+                pass
+
+    return None, None
+
+
+def get_market_price(ib, contract):
+    price, source = get_yahoo_market_price(contract.symbol)
+    if price:
+        return price, source
+
+    if EXPERIMENTAL_USE_IBKR_MARKET_DATA:
+        return get_ibkr_market_price(ib, contract)
 
     return None, None
 
@@ -277,32 +313,39 @@ def record_trade_event(supabase, payload):
     try:
         supabase.table("trade_events").insert(payload).execute()
     except Exception as exc:
-        print(f"[PURE TRAINING] Supabase trade event skipped for {payload.get('ticker')}: {exc}")
+        print(f"[EXPERIMENTAL] Supabase trade event skipped for {payload.get('ticker')}: {exc}")
 
 
 def update_force_flag(supabase, value):
+    payload = {
+        "force_pure_training_run": value,
+        "force_experimental_run": value,
+    }
     try:
-        supabase.table(SETTINGS_TABLE).update({"force_pure_training_run": value}).eq("id", 1).execute()
+        supabase.table(SETTINGS_TABLE).update(payload).eq("id", 1).execute()
     except Exception as exc:
-        print(f"[PURE TRAINING] Could not update force flag: {exc}")
+        print(f"[EXPERIMENTAL] Could not update force flag: {exc}")
 
 
 def update_run_result(supabase, result):
+    finished_at = result.get("finished_at") or utc_now_iso()
     try:
         supabase.table(SETTINGS_TABLE).update(
             {
                 "pure_training_last_result": result,
-                "pure_training_last_requested_at": result.get("finished_at") or utc_now_iso(),
+                "pure_training_last_requested_at": finished_at,
+                "experimental_last_result": result,
+                "experimental_last_requested_at": finished_at,
             }
         ).eq("id", 1).execute()
     except Exception as exc:
-        print(f"[PURE TRAINING] Could not update run result: {exc}")
+        print(f"[EXPERIMENTAL] Could not update run result: {exc}")
 
 
 def run_pure_training_monitor(dry_run=False):
     started_at = utc_now_iso()
     supabase = get_supabase_client()
-    print("[PURE TRAINING] Broker monitor snapshot starting.")
+    print("[EXPERIMENTAL] Broker monitor snapshot starting.")
     ib = connect_to_ibkr()
     try:
         summary = account_summary(ib)
@@ -339,7 +382,7 @@ def run_pure_training_monitor(dry_run=False):
             },
         )
         print(
-            f"[PURE TRAINING] Monitor: positions={len(open_positions)} "
+            f"[EXPERIMENTAL] Monitor: positions={len(open_positions)} "
             f"exposure={payload['exposure_cad_estimate']:,.2f} CAD est "
             f"unrealized_pnl={unrealized_pnl:,.2f}."
         )
@@ -388,7 +431,7 @@ def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True):
     )
 
     if not shortlist:
-        print("[PURE TRAINING] No shortlisted tickers found. Run category-universe/categories first.")
+        print("[EXPERIMENTAL] No shortlisted tickers found. Run category-universe/categories first.")
         update_run_result(
             supabase,
             {
@@ -415,16 +458,16 @@ def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True):
         current_exposure = estimate_current_exposure(ib, positions)
         current_exposure_cad = usd_to_cad(current_exposure)
         print(
-            f"[PURE TRAINING] Account net liquidation: {net_liq:,.2f} {net_currency}; "
+            f"[EXPERIMENTAL] Account net liquidation: {net_liq:,.2f} {net_currency}; "
             f"available funds: {available_funds:,.2f} {funds_currency}"
         )
         print(
-            f"[PURE TRAINING] Estimated open long exposure: "
+            f"[EXPERIMENTAL] Estimated open long exposure: "
             f"{current_exposure:,.2f} USD / {current_exposure_cad:,.2f} CAD."
         )
 
         if available_funds <= PURE_TRAINING_MIN_CASH_BUFFER_CAD:
-            print("[PURE TRAINING] Available funds are below the configured cash buffer; no orders sent.")
+            print("[EXPERIMENTAL] Available funds are below the configured cash buffer; no orders sent.")
             update_run_result(
                 supabase,
                 {
@@ -453,7 +496,7 @@ def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True):
             if quantity <= 0:
                 skipped += 1
                 reason = f"existing position {held:g} already meets max per ticker"
-                print(f"[PURE TRAINING] Skip {ticker}: {reason}.")
+                print(f"[EXPERIMENTAL] Skip {ticker}: {reason}.")
                 outcomes.append({"ticker": ticker, "status": "skipped", "reason": reason})
                 continue
 
@@ -463,7 +506,7 @@ def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True):
             except Exception as exc:
                 skipped += 1
                 reason = f"contract qualification failed: {exc}"
-                print(f"[PURE TRAINING] Skip {ticker}: {reason}")
+                print(f"[EXPERIMENTAL] Skip {ticker}: {reason}")
                 outcomes.append({"ticker": ticker, "status": "skipped", "reason": reason})
                 continue
 
@@ -471,7 +514,7 @@ def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True):
             if not price:
                 skipped += 1
                 reason = "no usable price"
-                print(f"[PURE TRAINING] Skip {ticker}: {reason}.")
+                print(f"[EXPERIMENTAL] Skip {ticker}: {reason}.")
                 outcomes.append({"ticker": ticker, "status": "skipped", "reason": reason})
                 continue
 
@@ -507,13 +550,13 @@ def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True):
             if projected_notional_cad > max(0, available_funds - PURE_TRAINING_MIN_CASH_BUFFER_CAD):
                 skipped += 1
                 reason = "available funds guard"
-                print(f"[PURE TRAINING] Skip {ticker}: {reason}.")
+                print(f"[EXPERIMENTAL] Skip {ticker}: {reason}.")
                 outcomes.append({"ticker": ticker, "status": "skipped", "reason": reason})
                 continue
             if projected_total_exposure_cad > PURE_TRAINING_MAX_ACCOUNT_CAD:
                 skipped += 1
                 reason = "account exposure cap"
-                print(f"[PURE TRAINING] Skip {ticker}: {reason}.")
+                print(f"[EXPERIMENTAL] Skip {ticker}: {reason}.")
                 outcomes.append({"ticker": ticker, "status": "skipped", "reason": reason})
                 continue
 
@@ -536,18 +579,18 @@ def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True):
             }
 
             print(
-                f"[PURE TRAINING] {ticker}: BUY {quantity} MKT; "
+                f"[EXPERIMENTAL] {ticker}: BUY {quantity} MKT; "
                 f"baseline={price:.2f} TP={take_profit:.2f} SL={stop_loss:.2f}"
             )
             if effective_dry_run:
-                print(f"[PURE TRAINING] DRY RUN: order not sent for {ticker}.")
+                print(f"[EXPERIMENTAL] DRY RUN: order not sent for {ticker}.")
             else:
                 for order in bracket:
                     ib.placeOrder(contract, order)
                 sent += 1
                 planned_notional = projected_notional
                 positions[ticker] = held + quantity
-                print(f"[PURE TRAINING] Sent bracket order for {ticker}.")
+                print(f"[EXPERIMENTAL] Sent bracket order for {ticker}.")
 
             record_trade_event(supabase, payload)
             outcomes.append(
@@ -565,12 +608,12 @@ def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True):
             )
 
             if not effective_dry_run and PURE_TRAINING_SYNC_EVERY_ORDERS > 0 and sent % PURE_TRAINING_SYNC_EVERY_ORDERS == 0:
-                print("[PURE TRAINING] Periodic broker sync...")
+                print("[EXPERIMENTAL] Periodic broker sync...")
                 sync_once(ib, supabase, mark_signals=False, dry_run=False)
             time.sleep(0.2)
 
         if not effective_dry_run:
-            print("[PURE TRAINING] Final broker sync...")
+            print("[EXPERIMENTAL] Final broker sync...")
             sync_once(ib, supabase, mark_signals=False, dry_run=False)
 
         result = {

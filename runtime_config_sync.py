@@ -24,6 +24,7 @@ from config import (
     EXPERIMENTAL_MODE_ENABLED,
     EXPERIMENTAL_ORDER_REF_PREFIX,
     EXPERIMENTAL_SESSION_DUPLICATE_GUARD,
+    EXPERIMENTAL_USE_IBKR_MARKET_DATA,
     EXECUTION_GATE_ENABLED,
     EXECUTION_GATE_FAIL_OPEN,
     EXECUTION_GATE_KEEP_ALIVE,
@@ -169,6 +170,7 @@ def build_runtime_config_snapshot():
             "experimental_session_duplicate_guard": EXPERIMENTAL_SESSION_DUPLICATE_GUARD,
             "experimental_local_log_path": EXPERIMENTAL_LOCAL_LOG_PATH,
             "experimental_order_ref_prefix": EXPERIMENTAL_ORDER_REF_PREFIX,
+            "experimental_use_ibkr_market_data": EXPERIMENTAL_USE_IBKR_MARKET_DATA,
         },
         "scanner_settings": {
             "scanner_interval_seconds": SCANNER_INTERVAL_SECONDS,
