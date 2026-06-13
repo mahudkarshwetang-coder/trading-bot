@@ -269,8 +269,7 @@ def get_market_price(ib, contract):
 
 def build_training_bracket(ib, quantity, baseline_price, run_id, ticker):
     parent_order_id = ib.client.getReqId()
-    take_profit = round(baseline_price * (1 + BRACKET_TAKE_PROFIT_PCT / 100.0), 2)
-    stop_loss = round(baseline_price * (1 - BRACKET_STOP_LOSS_PCT / 100.0), 2)
+    take_profit, stop_loss = training_bracket_prices(baseline_price)
     order_ref = f"{EXPERIMENTAL_ORDER_REF_PREFIX}-{run_id[:8]}-{ticker}"
     parent = MarketOrder(
         "BUY",
@@ -306,6 +305,12 @@ def build_training_bracket(ib, quantity, baseline_price, run_id, ticker):
     stop_loss_order.outsideRth = STOP_OUTSIDE_RTH
     stop_loss_order.orderRef = order_ref
     return [parent, take_profit_order, stop_loss_order], take_profit, stop_loss
+
+
+def training_bracket_prices(baseline_price):
+    take_profit = round(baseline_price * (1 + BRACKET_TAKE_PROFIT_PCT / 100.0), 2)
+    stop_loss = round(baseline_price * (1 - BRACKET_STOP_LOSS_PCT / 100.0), 2)
+    return take_profit, stop_loss
 
 
 def record_trade_event(supabase, payload):
@@ -392,8 +397,9 @@ def run_pure_training_monitor(dry_run=False):
         ib.disconnect()
 
 
-def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True):
-    effective_dry_run = DRY_RUN if dry_run is None else bool(dry_run)
+def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True, execution_mode="execute"):
+    build_only = execution_mode == "build"
+    effective_dry_run = True if build_only else (DRY_RUN if dry_run is None else bool(dry_run))
     run_id = uuid.uuid4().hex
     started_at = utc_now_iso()
     supabase = get_supabase_client()
@@ -403,7 +409,7 @@ def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True):
 
     shortlist = [clean_ticker(ticker) for ticker in (tickers or load_shortlist(supabase))]
     shortlist = [ticker for ticker in shortlist if ticker]
-    print("[EXPERIMENTAL] Basket trainer online.")
+    print("[EXPERIMENTAL] Basket builder online." if build_only else "[EXPERIMENTAL] Basket executor online.")
     print(
         f"[EXPERIMENTAL] Qty={PURE_TRAINING_ORDER_QUANTITY} SL={BRACKET_STOP_LOSS_PCT:.2f}% "
         f"TP={BRACKET_TAKE_PROFIT_PCT:.2f}% cap={PURE_TRAINING_MAX_ACCOUNT_CAD:,.0f} CAD "
@@ -417,6 +423,7 @@ def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True):
             "run_id": run_id,
             "started_at": started_at,
             "dry_run": effective_dry_run,
+            "execution_mode": execution_mode,
             "mode_enabled": PURE_TRAINING_MODE_ENABLED,
             "profile": "experimental",
             "tickers": shortlist,
@@ -440,6 +447,7 @@ def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True):
                 "reason": "no_shortlist",
                 "finished_at": utc_now_iso(),
                 "dry_run": effective_dry_run,
+                "execution_mode": execution_mode,
             },
         )
         return False
@@ -447,6 +455,7 @@ def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True):
     ib = connect_to_ibkr()
     sent = 0
     skipped = 0
+    candidates = 0
     planned_notional = 0.0
     outcomes = []
     try:
@@ -478,6 +487,7 @@ def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True):
                     "currency": funds_currency,
                     "finished_at": utc_now_iso(),
                     "dry_run": effective_dry_run,
+                    "execution_mode": execution_mode,
                 },
             )
             return False
@@ -560,13 +570,22 @@ def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True):
                 outcomes.append({"ticker": ticker, "status": "skipped", "reason": reason})
                 continue
 
-            bracket, take_profit, stop_loss = build_training_bracket(ib, quantity, price, run_id, ticker)
+            take_profit, stop_loss = training_bracket_prices(price)
+            bracket = None if build_only else build_training_bracket(ib, quantity, price, run_id, ticker)[0]
+            candidates += 1
+            planned_notional = projected_notional
+            status = "candidate" if build_only else ("dry_run" if effective_dry_run else "sent")
+            event_type = (
+                "experimental_basket_candidate"
+                if build_only
+                else ("pure_training_order_prepared" if effective_dry_run else "pure_training_order_sent")
+            )
             payload = {
                 "signal_id": None,
                 "ticker": ticker,
                 "action_type": "BUY",
-                "event_type": "pure_training_order_prepared" if effective_dry_run else "pure_training_order_sent",
-                "status": "dry_run" if effective_dry_run else "sent",
+                "event_type": event_type,
+                "status": status,
                 "quantity": quantity,
                 "price": price,
                 "source": SOURCE,
@@ -579,20 +598,24 @@ def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True):
             }
 
             print(
-                f"[EXPERIMENTAL] {ticker}: BUY {quantity} MKT; "
+                f"[EXPERIMENTAL] {ticker}: {'CANDIDATE' if build_only else 'BUY'} {quantity} MKT; "
                 f"baseline={price:.2f} TP={take_profit:.2f} SL={stop_loss:.2f}"
             )
-            if effective_dry_run:
+            if build_only:
+                print(f"[EXPERIMENTAL] PREVIEW: candidate published for {ticker}; order not sent.")
+            elif effective_dry_run:
                 print(f"[EXPERIMENTAL] DRY RUN: order not sent for {ticker}.")
             else:
                 for order in bracket:
                     ib.placeOrder(contract, order)
                 sent += 1
-                planned_notional = projected_notional
                 positions[ticker] = held + quantity
                 print(f"[EXPERIMENTAL] Sent bracket order for {ticker}.")
 
-            record_trade_event(supabase, payload)
+            if build_only:
+                append_training_event("experimental_basket_candidate", payload)
+            else:
+                record_trade_event(supabase, payload)
             outcomes.append(
                 {
                     "ticker": ticker,
@@ -622,8 +645,10 @@ def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True):
             "started_at": started_at,
             "finished_at": utc_now_iso(),
             "dry_run": effective_dry_run,
+            "execution_mode": execution_mode,
             "sent": sent,
             "skipped": skipped,
+            "candidates": candidates,
             "planned_notional": planned_notional,
             "planned_notional_cad": usd_to_cad(planned_notional),
             "starting_exposure": current_exposure,
@@ -634,12 +659,37 @@ def run_pure_training_mode(dry_run=None, tickers=None, reset_force_flag=True):
         }
         result["profile"] = "experimental"
         result["min_monthly_volatility_pct"] = EXPERIMENTAL_MIN_MONTHLY_VOLATILITY_PCT
-        append_training_event("experimental_run_finished", result)
+        if build_only:
+            result["status"] = "built"
+            append_training_event("experimental_basket_built", result)
+        else:
+            append_training_event("experimental_run_finished", result)
         update_run_result(supabase, result)
-        print(f"[EXPERIMENTAL] Run complete: sent={sent}, skipped={skipped}, dry_run={effective_dry_run}.")
+        print(
+            f"[EXPERIMENTAL] {'Build' if build_only else 'Run'} complete: "
+            f"candidates={candidates}, sent={sent}, skipped={skipped}, dry_run={effective_dry_run}."
+        )
         return True
     finally:
         ib.disconnect()
+
+
+def run_experimental_basket_build(dry_run=True, tickers=None, reset_force_flag=True):
+    return run_pure_training_mode(
+        dry_run=True,
+        tickers=tickers,
+        reset_force_flag=reset_force_flag,
+        execution_mode="build",
+    )
+
+
+def run_experimental_basket_execute(dry_run=None, tickers=None, reset_force_flag=True):
+    return run_pure_training_mode(
+        dry_run=dry_run,
+        tickers=tickers,
+        reset_force_flag=reset_force_flag,
+        execution_mode="execute",
+    )
 
 
 def parse_args():
@@ -648,8 +698,8 @@ def parse_args():
         "command",
         nargs="?",
         default="run",
-        choices=["run", "monitor"],
-        help="Run the training basket or record a broker monitor snapshot.",
+        choices=["build", "execute", "run", "monitor"],
+        help="Build a preview basket, execute the basket, or record a broker monitor snapshot.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Prepare and log orders without sending them to IBKR.")
     parser.add_argument("--tickers", help="Comma-separated ticker override for a small test run.")
@@ -664,11 +714,17 @@ def main():
         raise SystemExit(0 if success else 1)
 
     tickers = args.tickers.split(",") if args.tickers else None
-    success = run_pure_training_mode(
-        dry_run=args.dry_run or DRY_RUN,
-        tickers=tickers,
-        reset_force_flag=not args.keep_force_flag,
-    )
+    if args.command == "build":
+        success = run_experimental_basket_build(
+            tickers=tickers,
+            reset_force_flag=not args.keep_force_flag,
+        )
+    else:
+        success = run_experimental_basket_execute(
+            dry_run=args.dry_run or DRY_RUN,
+            tickers=tickers,
+            reset_force_flag=not args.keep_force_flag,
+        )
     raise SystemExit(0 if success else 1)
 
 

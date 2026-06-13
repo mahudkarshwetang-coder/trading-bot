@@ -13,7 +13,7 @@ This project is a Python signal pipeline for scanning equities, writing trade id
 
 The bot is organized around two operator-facing modes:
 
-- **Experimental mode** is the riskier paper-account basket experiment. It refreshes `category-universe`, builds the dynamic category shortlist, runs scanner/context enrichment, and only sends bracket BUY orders for shortlisted tickers with at least `EXPERIMENTAL_MIN_MONTHLY_VOLATILITY_PCT` one-month volatility.
+- **Experimental mode** is the riskier paper-account basket experiment. It now runs as a staged learning loop: build a preview basket, generate findings/feedback, then explicitly execute the basket only when you choose to.
 - **Training mode** is the standard master-scanner profile. It runs the existing scanner loop, signal queue, Qwen gates, journal, broker sync, and strategy feedback pipeline.
 
 Experimental mode still uses the proven `pure_training_mode.py` execution internals for compatibility, but the command and SignalCenter language should be treated as **Experimental** going forward.
@@ -26,13 +26,35 @@ Experimental guardrails:
 - skips tickers already held or already queued with an open BUY order in the same market session;
 - checks available funds and current open exposure against the 1,000,000 CAD paper-account cap, using `PURE_TRAINING_USD_CAD_RATE` for US-stock notional estimates;
 - writes local JSONL experiment records to `data/experimental_runs.jsonl` by default;
-- syncs IBKR broker positions during and after the basket run;
+- `experimental-build` publishes candidate/skipped basket evidence to Supabase without placing orders;
+- `experimental-findings` summarizes candidates, skip reasons, and whether automation is mature enough;
+- `experimental-execute` is the explicit order-sending step;
+- `experimental-cycle` runs build + findings and does not auto-buy;
+- syncs IBKR broker positions during and after execution;
 - writes `data/pure_training_adaptation.json` during review so tomorrow's category shortlist can lightly boost what worked and cool down what failed.
 
-Dry-run test:
+Build preview:
 
 ```powershell
-python master_scanner.py experimental-cycle --dry-run
+python master_scanner.py experimental-build
+```
+
+Findings:
+
+```powershell
+python master_scanner.py experimental-findings
+```
+
+Execute reviewed basket:
+
+```powershell
+python master_scanner.py experimental-execute
+```
+
+Build + findings cycle:
+
+```powershell
+python master_scanner.py experimental-cycle
 ```
 
 Continuous experimental engine:
@@ -41,7 +63,7 @@ Continuous experimental engine:
 python master_scanner.py experimental-engine
 ```
 
-This runs the experimental basket once per day at or after `MASTER_DAILY_CATEGORY_REFRESH_TIME`, monitors TWS every `PURE_TRAINING_MONITOR_INTERVAL_SECONDS` seconds, and runs `experimental-review` at `PURE_TRAINING_REVIEW_TIME`.
+This runs the experimental build/findings cycle once per day at or after `MASTER_DAILY_CATEGORY_REFRESH_TIME`, monitors TWS every `PURE_TRAINING_MONITOR_INTERVAL_SECONDS` seconds, and runs `experimental-review` at `PURE_TRAINING_REVIEW_TIME`.
 
 Continuous training engine:
 
@@ -63,7 +85,7 @@ The launcher watches `public.script_launch_requests` and opens each allowed scri
 -- supabase/script_launch_requests.sql
 ```
 
-Allowed script keys include `execution-bridge` (`python main.py`), `training-engine`, `experimental-engine`, `daily-cycle`, `category-refresh`, `experimental-cycle`, `experimental-review`, `tech-news-monitor`, and `health-check`.
+Allowed script keys include `execution-bridge` (`python main.py`), `training-engine`, `experimental-engine`, `daily-cycle`, `category-refresh`, `experimental-cycle`, `experimental-build`, `experimental-findings`, `experimental-execute`, `experimental-review`, `tech-news-monitor`, and `health-check`.
 
 ## Required Services
 

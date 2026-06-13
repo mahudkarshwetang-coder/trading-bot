@@ -355,6 +355,24 @@ def run_pure_training(dry_run=False):
     return run_pure_training_mode(dry_run=dry_run)
 
 
+def run_experimental_build(dry_run=False):
+    from pure_training_mode import run_experimental_basket_build
+
+    return run_experimental_basket_build(dry_run=dry_run)
+
+
+def run_experimental_execute(dry_run=False):
+    from pure_training_mode import run_experimental_basket_execute
+
+    return run_experimental_basket_execute(dry_run=dry_run)
+
+
+def run_experimental_findings(dry_run=False):
+    from experimental_findings import run_experimental_findings
+
+    return run_experimental_findings(dry_run=dry_run)
+
+
 def run_pure_training_monitor(dry_run=False):
     from pure_training_mode import run_pure_training_monitor
 
@@ -405,7 +423,10 @@ OPERATIONS = {
     "ticker-intel": run_ticker_intel,
     "runtime-config": run_runtime_config,
     "routing-status": run_routing_status,
-    "experimental": run_pure_training,
+    "experimental": run_experimental_build,
+    "experimental-build": run_experimental_build,
+    "experimental-findings": run_experimental_findings,
+    "experimental-execute": run_experimental_execute,
     "experimental-monitor": run_pure_training_monitor,
     "experimental-adapt": run_pure_training_adapt,
     "pure-training": run_pure_training,
@@ -424,10 +445,8 @@ WORKFLOWS = {
         "intraday",
         "ticker-intel",
         "context",
-        "experimental",
-        "experimental-monitor",
-        "broker-sync",
-        "journal",
+        "experimental-build",
+        "experimental-findings",
         "briefing",
     ],
     EXPERIMENTAL_REVIEW_WORKFLOW: [
@@ -797,6 +816,12 @@ def run_operation(name, dry_run=False, mark_missing_signals=BROKER_SYNC_MARK_MIS
             "category-universe",
             "ticker-intel",
             "runtime-config",
+            "experimental",
+            "experimental-build",
+            "experimental-findings",
+            "experimental-execute",
+            "experimental-monitor",
+            "experimental-adapt",
             "pure-training",
             "pure-training-monitor",
             "pure-training-adapt",

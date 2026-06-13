@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config import (
+    EXPERIMENTAL_LOCAL_LOG_PATH,
     PURE_TRAINING_ADAPTATION_PATH,
-    PURE_TRAINING_LOCAL_LOG_PATH,
     get_supabase_client,
 )
 from local_data_recorder import append_local_event
@@ -29,7 +29,7 @@ def finite_float(value):
         return None
 
 
-def read_local_events(path=PURE_TRAINING_LOCAL_LOG_PATH, limit=2000):
+def read_local_events(path=EXPERIMENTAL_LOCAL_LOG_PATH, limit=2000):
     target = Path(path)
     if not target.exists():
         return []
@@ -48,7 +48,7 @@ def read_local_events(path=PURE_TRAINING_LOCAL_LOG_PATH, limit=2000):
 
 def latest_training_tickers(events):
     for event in reversed(events):
-        if event.get("event_type") != "pure_training_run_finished":
+        if event.get("event_type") not in {"experimental_run_finished", "pure_training_run_finished"}:
             continue
         payload = event.get("payload") or {}
         outcomes = payload.get("outcomes") or []
@@ -198,19 +198,19 @@ def write_adaptation(adaptation, dry_run=False):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(adaptation, indent=2, sort_keys=True), encoding="utf-8")
     append_local_event(
-        "pure_training_adaptation_written",
+        "experimental_adaptation_written",
         adaptation,
         source=SOURCE,
-        path=PURE_TRAINING_LOCAL_LOG_PATH,
+        path=EXPERIMENTAL_LOCAL_LOG_PATH,
     )
-    print(f"[PURE TRAINING ADAPT] Wrote adaptation file: {target}")
+    print(f"[EXPERIMENTAL ADAPT] Wrote adaptation file: {target}")
     return True
 
 
 def run_pure_training_adaptation(dry_run=False):
     events = read_local_events()
     tickers, run_id = latest_training_tickers(events)
-    print(f"[PURE TRAINING ADAPT] Latest sent basket: {len(tickers)} ticker(s).")
+    print(f"[EXPERIMENTAL ADAPT] Latest sent basket: {len(tickers)} ticker(s).")
     if not tickers:
         adaptation = build_adaptation([], {}, source_run_id=run_id)
         return write_adaptation(adaptation, dry_run=dry_run)
@@ -220,7 +220,7 @@ def run_pure_training_adaptation(dry_run=False):
     category_map = fetch_category_map(supabase, tickers)
     adaptation = build_adaptation(positions, category_map, source_run_id=run_id)
     print(
-        "[PURE TRAINING ADAPT] Adjustments: "
+        "[EXPERIMENTAL ADAPT] Adjustments: "
         f"{len(adaptation['ticker_adjustments'])} ticker, "
         f"{len(adaptation['category_adjustments'])} category, "
         f"{len(adaptation['cooldowns'])} cooldown."

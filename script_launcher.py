@@ -96,8 +96,23 @@ LAUNCH_COMMANDS = {
     ),
     "experimental-cycle": LaunchCommand(
         key="experimental-cycle",
-        title="Experimental Basket",
+        title="Experimental Build + Findings",
         command=("python", "master_scanner.py", "experimental-cycle"),
+    ),
+    "experimental-build": LaunchCommand(
+        key="experimental-build",
+        title="Experimental Build",
+        command=("python", "master_scanner.py", "experimental-build"),
+    ),
+    "experimental-findings": LaunchCommand(
+        key="experimental-findings",
+        title="Experimental Findings",
+        command=("python", "master_scanner.py", "experimental-findings"),
+    ),
+    "experimental-execute": LaunchCommand(
+        key="experimental-execute",
+        title="Experimental Execute",
+        command=("python", "master_scanner.py", "experimental-execute"),
     ),
     "pure-training-review": LaunchCommand(
         key="pure-training-review",

@@ -597,6 +597,7 @@ def listen_for_commands():
     )
     logged_pending_sells = set()
     last_heartbeat = 0
+    last_pause_log = 0
 
     while True:
         try:
@@ -633,10 +634,19 @@ def listen_for_commands():
             if settings_resp.data:
                 settings = settings_resp.data[0]
                 
-                # Master Off Switch
+                # Master pause from the iPad should pause routing, not trip the hard circuit breaker.
                 if not settings.get("is_active", True):
-                    SYSTEM_HALTED = True
-                    print("\n🛑 IPAD OVERRIDE: Master Switch toggled OFF. Halting bot.")
+                    if current_tick - last_pause_log >= 30:
+                        print("\nIPAD PAUSE: Master Switch is OFF. Execution bridge is standing by.")
+                        publish_system_status(
+                            "execution_bridge",
+                            "paused",
+                            detail="iPad Master Switch is OFF; routing is paused until Bot Active is enabled.",
+                            market_session=get_market_session().name,
+                            metadata={"system_halted": SYSTEM_HALTED, "is_active": False},
+                        )
+                        last_pause_log = current_tick
+                    time.sleep(2)
                     continue
                 
                 # The "Semi-Autonomous" Logic
