@@ -21,8 +21,10 @@ from config import (
     POST_TRADE_REVIEW_TIMEOUT_SECONDS,
     SIGNAL_JOURNAL_PATH,
     get_supabase_client,
+    resolve_ollama_model,
 )
 from llm_metrics import record_llm_metric
+from performance_governor import print_compute_notice
 
 HORIZONS = ["15m", "1h", "1d", "5d"]
 PREFERRED_HORIZON_ORDER = ["1d", "5d", "1h", "15m"]
@@ -278,8 +280,15 @@ Return strict JSON:
 
 def ask_qwen_review(signal, journal_row, entry_price, exit_price, pnl_pct, horizon):
     prompt = build_prompt(signal, journal_row, entry_price, exit_price, pnl_pct, horizon)
+    model_name = resolve_ollama_model("post_trade_review")
+    print_compute_notice(
+        "post_trade_review",
+        "post-trade review analysis",
+        model=model_name,
+        prefix="[POST TRADE]",
+    )
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": model_name,
         "prompt": prompt,
         "format": "json",
         "stream": False,
@@ -317,7 +326,7 @@ def ask_qwen_review(signal, journal_row, entry_price, exit_price, pnl_pct, horiz
         record_llm_metric(
             source="post_trade_review",
             task="trade_review",
-            model=OLLAMA_MODEL,
+            model=model_name,
             duration_seconds=time.perf_counter() - started_at,
             success=True,
             endpoint=endpoint_label,
@@ -334,7 +343,7 @@ def ask_qwen_review(signal, journal_row, entry_price, exit_price, pnl_pct, horiz
         record_llm_metric(
             source="post_trade_review",
             task="trade_review",
-            model=OLLAMA_MODEL,
+            model=model_name,
             duration_seconds=time.perf_counter() - started_at,
             success=False,
             endpoint=endpoint_label,

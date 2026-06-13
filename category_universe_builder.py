@@ -8,6 +8,7 @@ import pandas as pd
 import yfinance as yf
 
 from config import CATEGORY_MIN_SCORE, CATEGORY_UNIVERSE_LIMIT, get_supabase_client
+from performance_governor import print_compute_notice
 
 YAHOO_DELAY_SECONDS = 0.15
 
@@ -464,6 +465,11 @@ def upsert_records(records, dry_run=False):
 
 
 def build_category_universe(limit=CATEGORY_UNIVERSE_LIMIT, min_score=CATEGORY_MIN_SCORE, dry_run=False):
+    print_compute_notice(
+        "category_universe_builder",
+        f"broad Yahoo category-universe rebuild across up to {limit} ticker candidates",
+        prefix="[CATEGORY UNIVERSE]",
+    )
     listings = fetch_listed_tickers()
     print(f"Loaded {len(listings)} ticker candidates. Scanning up to {limit}.")
     records = []

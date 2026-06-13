@@ -1,5 +1,4 @@
 import time
-import subprocess
 import math
 import yfinance as yf
 from datetime import datetime, timedelta, timezone
@@ -26,7 +25,10 @@ from config import (
     get_supabase_client,
 )
 from execution_quality_gate import review_execution_quality
+from local_data_recorder import append_local_event
 from market_session import get_market_session, now_market_time, parse_time
+from script_launcher import launch_script_key
+from system_status import publish_system_status
 
 # --- CONFIGURATION & SECURITY ---
 try:
@@ -154,6 +156,12 @@ def record_trade_event(signal, event_type, status=None, price=None, quantity=Non
         "occurred_at": utc_now_iso(),
     }
 
+    append_local_event(
+        "trade_event",
+        payload,
+        source="execution_bridge",
+    )
+
     try:
         supabase.table("trade_events").insert(payload).execute()
     except Exception as exc:
@@ -233,7 +241,13 @@ def connect_to_broker():
     global account_pnl
     try:
         ib.connect(IBKR_HOST, IBKR_PORT, clientId=IBKR_CLIENT_ID)
-        ib.reqMarketDataType(4) 
+        ib.reqMarketDataType(4)
+        publish_system_status(
+            "execution_bridge",
+            "running",
+            detail="Connected to Interactive Brokers Paper Trading Terminal.",
+            metadata={"host": IBKR_HOST, "port": IBKR_PORT, "client_id": IBKR_CLIENT_ID},
+        )
         print("✅ Connected to Interactive Brokers Paper Trading Terminal.")
         
         # Subscribe to continuous PnL updates for the circuit breaker
@@ -244,6 +258,13 @@ def connect_to_broker():
             
     except Exception as e:
         print(f"🚨 Broker Connection Failed: {e}")
+        publish_system_status(
+            "execution_bridge",
+            "error",
+            detail="Broker connection failed.",
+            error=str(e),
+            metadata={"host": IBKR_HOST, "port": IBKR_PORT, "client_id": IBKR_CLIENT_ID},
+        )
         exit(1)
 
 def check_circuit_breaker(max_drawdown_pct=2.0):
@@ -569,12 +590,35 @@ def listen_for_commands():
     print("👀 Execution Bridge online. Monitoring cloud for orders and risk thresholds...")
     
     # We use a memory set to avoid spamming the console with pending SELL logs every 2 seconds
+    publish_system_status(
+        "execution_bridge",
+        "running",
+        detail="Monitoring cloud for orders and risk thresholds.",
+    )
     logged_pending_sells = set()
+    last_heartbeat = 0
 
     while True:
         try:
+            current_tick = time.monotonic()
+            if current_tick - last_heartbeat >= 30:
+                publish_system_status(
+                    "execution_bridge",
+                    "running",
+                    detail="Monitoring cloud for orders and risk thresholds.",
+                    market_session=get_market_session().name,
+                    metadata={"system_halted": SYSTEM_HALTED},
+                )
+                last_heartbeat = current_tick
+
             # 1. --- CIRCUIT BREAKER CHECK ---
             if SYSTEM_HALTED:
+                publish_system_status(
+                    "execution_bridge",
+                    "error",
+                    detail="Circuit breaker active; manual restart required.",
+                    error="SYSTEM_HALTED",
+                )
                 print("🛑 SYSTEM LOCKED: Circuit Breaker active. Needs manual restart.")
                 time.sleep(10)
                 continue
@@ -612,19 +656,28 @@ def listen_for_commands():
 
                 # Manual Dashboard Overrides
                 if settings.get("force_radar"):
-                    subprocess.run(["python", "radar.py"])
+                    launch_script_key("radar-scan", requested_by="main.py:force_radar")
                     supabase.table("bot_settings").update({"force_radar": False}).eq("id", 1).execute()
                 if settings.get("force_earnings"):
-                    subprocess.run(["python", "earnings_radar.py"])
+                    launch_script_key("earnings-radar", requested_by="main.py:force_earnings")
                     supabase.table("bot_settings").update({"force_earnings": False}).eq("id", 1).execute()
                 if settings.get("force_scanner"):
-                    subprocess.run(["python", "llm_scanner.py"])
-                    subprocess.run(["python", "context_enrichment.py"])
+                    launch_script_key("llm-scanner", requested_by="main.py:force_scanner")
+                    launch_script_key("context-enrichment", requested_by="main.py:force_scanner")
                     supabase.table("bot_settings").update({"force_scanner": False}).eq("id", 1).execute()
+                if settings.get("force_master_scanner"):
+                    print("\n[MASTER SCANNER] IPAD OVERRIDE: Full daily-cycle requested.")
+                    supabase.table("bot_settings").update({"force_master_scanner": False}).eq("id", 1).execute()
+                    launch_script_key("daily-cycle", requested_by="main.py:force_master_scanner")
                 if settings.get("force_broker_sync"):
                     print("\n🔄 IPAD OVERRIDE: Manual IBKR ledger sync requested.")
                     sync_broker_snapshot(label="iPad manual ledger sync")
                     supabase.table("bot_settings").update({"force_broker_sync": False}).eq("id", 1).execute()
+
+                if settings.get("pure_training_mode_enabled") and settings.get("force_pure_training_run"):
+                    print("\n[PURE TRAINING] IPAD OVERRIDE: Pure training basket requested.")
+                    supabase.table("bot_settings").update({"force_pure_training_run": False}).eq("id", 1).execute()
+                    launch_script_key("pure-training-cycle", requested_by="main.py:force_pure_training_run")
 
             # 3. --- TRADE EXECUTION LISTENER ---
             # This catches BOTH auto-approved BUYs and manually approved SELLs from the iPad

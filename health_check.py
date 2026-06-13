@@ -13,8 +13,16 @@ from config import (
     IBKR_HOST,
     IBKR_NEWS_CLIENT_ID,
     IBKR_PORT,
+    OLLAMA_DEEP_MODEL,
+    OLLAMA_EDGE_MODEL,
+    OLLAMA_GAMING_MODEL,
+    OLLAMA_LIVE_MODEL,
     OLLAMA_MODEL,
+    OLLAMA_MODEL_ROUTING_ENABLED,
+    OLLAMA_NEWS_MODEL,
+    OLLAMA_SCANNER_MODEL,
     OLLAMA_URL,
+    PERFORMANCE_GOVERNOR_ENABLED,
     PERFORMANCE_GAMING_CPU_BUDGET_PCT,
     PERFORMANCE_GAMING_EXTERNAL_PRIORITY,
     PERFORMANCE_GAMING_PROCESS_PRIORITY,
@@ -39,6 +47,7 @@ OPTIONAL_ENV = [
     "IBKR_SYNC_CLIENT_ID",
     "IBKR_CONTEXT_CLIENT_ID",
     "IBKR_NEWS_CLIENT_ID",
+    "IBKR_PURE_TRAINING_CLIENT_ID",
     "MAX_DRAWDOWN_PCT",
     "MARKET_TIMEZONE",
     "PREMARKET_OPEN",
@@ -55,6 +64,13 @@ OPTIONAL_ENV = [
     "ALLOW_GLOBAL_OVERNIGHT_TRADING",
     "OLLAMA_URL",
     "OLLAMA_MODEL",
+    "OLLAMA_MODEL_ROUTING_ENABLED",
+    "OLLAMA_LIVE_MODEL",
+    "OLLAMA_SCANNER_MODEL",
+    "OLLAMA_NEWS_MODEL",
+    "OLLAMA_DEEP_MODEL",
+    "OLLAMA_EDGE_MODEL",
+    "OLLAMA_GAMING_MODEL",
     "PERFORMANCE_GOVERNOR_ENABLED",
     "PERFORMANCE_MODE",
     "PERFORMANCE_GAME_PROCESS_NAMES",
@@ -80,6 +96,11 @@ OPTIONAL_ENV = [
     "PERFORMANCE_DEFER_TASKS",
     "LLM_METRICS_ENABLED",
     "LLM_METRICS_PATH",
+    "LOCAL_DATA_CAPTURE_ENABLED",
+    "LOCAL_DATA_CAPTURE_PATH",
+    "SCRIPT_LAUNCHER_ENABLED",
+    "SCRIPT_LAUNCHER_INTERVAL_SECONDS",
+    "SCRIPT_LAUNCHER_TABLE",
     "LLM_SCANNER_TIMEOUT_SECONDS",
     "LLM_SCANNER_RETRY_ATTEMPTS",
     "LLM_SCANNER_RETRY_BACKOFF_SECONDS",
@@ -92,6 +113,7 @@ OPTIONAL_ENV = [
     "SIGNAL_QUALITY_MIN_SCORE",
     "SIGNAL_QUALITY_TIMEOUT_SECONDS",
     "SIGNAL_QUALITY_FAIL_OPEN",
+    "SIGNAL_QUALITY_FAIL_OPEN_ON_PARSE_ERROR",
     "SIGNAL_QUALITY_NUM_PREDICT",
     "SIGNAL_QUALITY_RETRY_ATTEMPTS",
     "SIGNAL_QUALITY_RETRY_BACKOFF_SECONDS",
@@ -106,7 +128,20 @@ OPTIONAL_ENV = [
     "EXECUTION_GATE_KEEP_ALIVE",
     "SCANNER_INTERVAL_SECONDS",
     "SIGNAL_COOLDOWN_MINUTES",
+    "CYCLE_LOG_ENABLED",
+    "CYCLE_LOG_PATH",
+    "CYCLE_LOG_PUSH_SUPABASE",
+    "CYCLE_LOG_SIGNAL_LIMIT",
+    "CYCLE_LOG_EVENT_LIMIT",
+    "TECH_RSI_BUY_THRESHOLD",
+    "TECH_RSI_SELL_THRESHOLD",
+    "TECH_BUY_CONFIDENCE",
+    "TECH_SELL_CONFIDENCE",
+    "RADAR_TARGET_LIMIT",
+    "RADAR_MIN_ABS_MOVE_PCT",
+    "RADAR_ALLOW_YAHOO_TRENDING_FALLBACK",
     "MASTER_DAILY_CATEGORY_REFRESH_TIME",
+    "MASTER_EVENING_REVIEW_TIME",
     "OPEN_SCANNER_ENABLED",
     "OPEN_SCANNER_START",
     "OPEN_SCANNER_END",
@@ -120,6 +155,24 @@ OPTIONAL_ENV = [
     "OPEN_SCANNER_COOLDOWN_MINUTES",
     "SYNC_BROKER_AFTER_ORDER",
     "SYNC_BROKER_AFTER_ORDER_DELAY_SECONDS",
+    "PURE_TRAINING_MODE_ENABLED",
+    "PURE_TRAINING_ORDER_QUANTITY",
+    "PURE_TRAINING_MAX_ACCOUNT_CAD",
+    "PURE_TRAINING_MIN_CASH_BUFFER_CAD",
+    "PURE_TRAINING_USD_CAD_RATE",
+    "PURE_TRAINING_MAX_POSITION_PER_TICKER",
+    "PURE_TRAINING_MAX_TICKERS_PER_RUN",
+    "PURE_TRAINING_SYNC_EVERY_ORDERS",
+    "PURE_TRAINING_LOCAL_LOG_PATH",
+    "PURE_TRAINING_ADAPTATION_PATH",
+    "PURE_TRAINING_MONITOR_INTERVAL_SECONDS",
+    "PURE_TRAINING_REVIEW_TIME",
+    "PURE_TRAINING_ORDER_REF_PREFIX",
+    "EXPERIMENTAL_MODE_ENABLED",
+    "EXPERIMENTAL_MIN_MONTHLY_VOLATILITY_PCT",
+    "EXPERIMENTAL_SESSION_DUPLICATE_GUARD",
+    "EXPERIMENTAL_LOCAL_LOG_PATH",
+    "EXPERIMENTAL_ORDER_REF_PREFIX",
     "CATEGORY_UNIVERSE_LIMIT",
     "CATEGORY_MIN_SCORE",
     "CATEGORY_TARGET_LIMIT",
@@ -380,6 +433,30 @@ def check_supabase(report):
             report.ok("Supabase live_holdings", f"{len(live_holdings.data or [])} sample row(s)")
         except Exception:
             report.warn("Supabase live_holdings", "missing; run supabase/live_holdings.sql for Wealthsimple holdings watch")
+
+        try:
+            runtime_config = supabase.table("bot_runtime_config").select("id,updated_at").eq("id", 1).limit(1).execute()
+            report.ok("Supabase bot_runtime_config", f"{len(runtime_config.data or [])} row(s)")
+        except Exception:
+            report.warn("Supabase bot_runtime_config", "missing; run supabase/bot_runtime_config.sql for iPad runtime settings")
+
+        try:
+            status_rows = supabase.table("system_status").select("component,status").limit(1).execute()
+            report.ok("Supabase system_status", f"{len(status_rows.data or [])} sample row(s)")
+        except Exception:
+            report.warn("Supabase system_status", "missing; run supabase/system_status.sql for bot heartbeat status")
+
+        try:
+            cycle_rows = supabase.table("scanner_cycles").select("cycle_id,status").limit(1).execute()
+            report.ok("Supabase scanner_cycles", f"{len(cycle_rows.data or [])} sample row(s)")
+        except Exception:
+            report.warn("Supabase scanner_cycles", "missing; run supabase/scanner_cycles.sql for cycle training history")
+
+        try:
+            launch_rows = supabase.table("script_launch_requests").select("id,status").limit(1).execute()
+            report.ok("Supabase script_launch_requests", f"{len(launch_rows.data or [])} sample row(s)")
+        except Exception:
+            report.warn("Supabase script_launch_requests", "missing; run supabase/script_launch_requests.sql for iPad script launcher")
     except Exception as exc:
         report.fail("Supabase", str(exc))
 
@@ -419,6 +496,32 @@ def check_ollama(report):
                         "Ollama model",
                         f"configured model not found: {OLLAMA_MODEL} (installed: {', '.join(sorted(installed_names)) or 'none'})",
                     )
+            if OLLAMA_MODEL_ROUTING_ENABLED:
+                role_models = {
+                    "live": OLLAMA_LIVE_MODEL,
+                    "scanner": OLLAMA_SCANNER_MODEL,
+                    "news": OLLAMA_NEWS_MODEL,
+                    "deep": OLLAMA_DEEP_MODEL,
+                    "edge": OLLAMA_EDGE_MODEL,
+                }
+                if PERFORMANCE_GOVERNOR_ENABLED:
+                    role_models["quiet"] = OLLAMA_GAMING_MODEL
+                missing = []
+                for role, model_name in role_models.items():
+                    normalized = str(model_name or "").strip().lower()
+                    if not normalized:
+                        continue
+                    base_name = normalized.split(":", 1)[0]
+                    has_model = normalized in installed_names or any(
+                        name.split(":", 1)[0] == base_name for name in installed_names
+                    )
+                    if not has_model:
+                        missing.append(f"{role}={model_name}")
+                if missing:
+                    report.warn("Ollama model routing", f"missing role model(s): {', '.join(missing)}")
+                else:
+                    role_text = ", ".join(f"{role}={model}" for role, model in role_models.items())
+                    report.ok("Ollama model routing", role_text)
             endpoint_path = urlparse(OLLAMA_URL).path.rstrip("/").lower()
             if configured.startswith("qwen3") and endpoint_path.endswith("/api/generate"):
                 report.warn(

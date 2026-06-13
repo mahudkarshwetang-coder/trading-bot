@@ -25,8 +25,10 @@ from config import (
     TECH_NEWS_OUTPUT_PATH,
     IBKR_NEWS_OUTPUT_PATH,
     get_supabase_client,
+    resolve_ollama_model,
 )
 from llm_metrics import record_llm_metric
+from performance_governor import print_compute_notice
 
 DEFAULT_CATEGORIES = [
     "Nuclear Energy",
@@ -526,8 +528,15 @@ def normalize_briefing(raw, session_type, briefing_date):
 
 def ask_ollama_for_briefing(session_type, briefing_date, context):
     prompt = build_ollama_prompt(session_type, briefing_date, context)
+    model_name = resolve_ollama_model("briefing")
+    print_compute_notice(
+        "daily_market_briefing",
+        "daily market briefing generation",
+        model=model_name,
+        prefix="[BRIEFING]",
+    )
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": model_name,
         "prompt": prompt,
         "format": "json",
         "stream": False,
@@ -564,7 +573,7 @@ def ask_ollama_for_briefing(session_type, briefing_date, context):
         record_llm_metric(
             source="daily_market_briefing",
             task="market_briefing",
-            model=OLLAMA_MODEL,
+            model=model_name,
             duration_seconds=time.perf_counter() - started_at,
             success=True,
             endpoint=endpoint_label,
@@ -581,7 +590,7 @@ def ask_ollama_for_briefing(session_type, briefing_date, context):
         record_llm_metric(
             source="daily_market_briefing",
             task="market_briefing",
-            model=OLLAMA_MODEL,
+            model=model_name,
             duration_seconds=time.perf_counter() - started_at,
             success=False,
             endpoint=endpoint_label,

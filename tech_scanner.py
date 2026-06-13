@@ -3,7 +3,13 @@ import time
 import pandas as pd
 import yfinance as yf
 
-from config import get_supabase_client
+from config import (
+    TECH_BUY_CONFIDENCE,
+    TECH_RSI_BUY_THRESHOLD,
+    TECH_RSI_SELL_THRESHOLD,
+    TECH_SELL_CONFIDENCE,
+    get_supabase_client,
+)
 from signal_utils import insert_signal_with_cooldown
 
 # --- CONFIGURATION ---
@@ -56,7 +62,7 @@ def calculate_rsi(ticker):
 
 def push_signal_to_ipad(ticker, action, rsi_value, memo):
     """Uploads the generated signal to Supabase."""
-    confidence = 85.0 if action == "BUY" else 80.0
+    confidence = TECH_BUY_CONFIDENCE if action == "BUY" else TECH_SELL_CONFIDENCE
     
     payload = {
         "ticker": ticker,
@@ -85,6 +91,11 @@ def run_market_scan():
         return
         
     print(f"Loaded {len(watchlist)} daily category targets for technical screening.")
+    print(
+        "Technical thresholds: "
+        f"BUY RSI <= {TECH_RSI_BUY_THRESHOLD:g}; "
+        f"SELL RSI >= {TECH_RSI_SELL_THRESHOLD:g}"
+    )
     
     for ticker in watchlist:
         print(f"🔍 Analyzing {ticker}...")
@@ -95,12 +106,20 @@ def run_market_scan():
             
         print(f"   ↳ Current RSI: {rsi:.2f}")
         
-        if rsi < 30:
-            memo = f"Technical Breakout Scanner detected an extreme OVERSOLD condition (RSI: {rsi:.2f}). The stock has been heavily sold off and mathematical mean-reversion suggests a high probability of an upward bounce."
+        if rsi <= TECH_RSI_BUY_THRESHOLD:
+            memo = (
+                f"Technical Scanner detected an oversold bounce setup (RSI: {rsi:.2f}, "
+                f"threshold <= {TECH_RSI_BUY_THRESHOLD:g}). The stock is materially sold off "
+                "and may be setting up for a mean-reversion move."
+            )
             push_signal_to_ipad(ticker, "BUY", rsi, memo)
             
-        elif rsi > 70:
-            memo = f"Technical Breakout Scanner detected an extreme OVERBOUGHT condition (RSI: {rsi:.2f}). The stock is mathematically over-extended and a pullback or correction is highly probable."
+        elif rsi >= TECH_RSI_SELL_THRESHOLD:
+            memo = (
+                f"Technical Scanner detected an overbought caution setup (RSI: {rsi:.2f}, "
+                f"threshold >= {TECH_RSI_SELL_THRESHOLD:g}). The stock is extended and may be "
+                "vulnerable to a pullback."
+            )
             push_signal_to_ipad(ticker, "SELL", rsi, memo)
             
         else:

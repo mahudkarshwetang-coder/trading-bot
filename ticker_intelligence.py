@@ -25,6 +25,7 @@ from config import (
     TICKER_INTEL_WATCHLIST_LIMIT,
     get_supabase_client,
 )
+from performance_governor import print_compute_notice
 
 YAHOO_RSS_URL = "https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"
 REDDIT_RSS_URL = "https://www.reddit.com/search.rss?q={query}&sort=new&t=week"
@@ -916,6 +917,11 @@ def sync_ticker_intelligence(
     dry_run=False,
     push_supabase=TICKER_INTEL_PUSH_SUPABASE,
 ):
+    print_compute_notice(
+        "ticker_intelligence",
+        "ticker intelligence dossier sync",
+        prefix="[TICKER INTEL]",
+    )
     supabase = safe_get_supabase_client(required=bool(push_supabase))
     requested = []
     for ticker in tickers or []:

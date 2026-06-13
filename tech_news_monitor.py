@@ -35,12 +35,14 @@ from config import (
     TECH_NEWS_RELEVANCE_FILTER_ENABLED,
     TECH_NEWS_RELEVANCE_MIN_SCORE,
     TECH_NEWS_TICKERS,
+    resolve_ollama_model,
 )
 from llm_metrics import record_llm_metric
 from performance_governor import (
     adjust_ollama_runtime,
     adjust_poll_interval,
     gaming_budget_pause,
+    print_compute_notice,
     print_profile_notice,
 )
 
@@ -437,10 +439,11 @@ def build_llm_response_schema():
 
 
 def warm_ollama_model(keep_alive, timeout_seconds):
+    model_name = resolve_ollama_model("tech_news")
     try:
         if ollama_uses_chat_endpoint():
             payload = {
-                "model": OLLAMA_MODEL,
+                "model": model_name,
                 "messages": [{"role": "user", "content": "Return strict JSON: {\"ok\": true}"}],
                 "format": "json",
                 "stream": False,
@@ -453,7 +456,7 @@ def warm_ollama_model(keep_alive, timeout_seconds):
             }
         else:
             payload = {
-                "model": OLLAMA_MODEL,
+                "model": model_name,
                 "prompt": "Return strict JSON: {\"ok\": true}",
                 "format": "json",
                 "stream": False,
@@ -479,13 +482,14 @@ def analyze_batch_with_ollama(
     retry_attempts,
     retry_backoff_seconds,
 ):
+    model_name = resolve_ollama_model("tech_news")
     predict_budget = max(
         48,
         int(num_predict),
         int(num_predict_per_item) * max(1, len(batch)),
     )
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": model_name,
         "prompt": build_llm_prompt(batch),
         "format": build_llm_response_schema(),
         "stream": False,
@@ -542,7 +546,7 @@ def analyze_batch_with_ollama(
             record_llm_metric(
                 source="tech_news_monitor",
                 task="headline_batch",
-                model=OLLAMA_MODEL,
+                model=model_name,
                 duration_seconds=time.perf_counter() - started_at,
                 success=True,
                 endpoint=endpoint_label,
@@ -568,7 +572,7 @@ def analyze_batch_with_ollama(
             record_llm_metric(
                 source="tech_news_monitor",
                 task="headline_batch",
-                model=OLLAMA_MODEL,
+                model=model_name,
                 duration_seconds=time.perf_counter() - started_at,
                 success=False,
                 endpoint=endpoint_label,
@@ -707,8 +711,14 @@ def enrich_with_ollama(
 
     target = items[:max(1, max_items)]
     step = max(1, batch_size)
+    print_compute_notice(
+        "tech_news_monitor",
+        f"tech-news LLM analysis for up to {len(target)} headline(s)",
+        model=resolve_ollama_model("tech_news"),
+        prefix="[TECH NEWS]",
+    )
     print(
-        f"[TECH NEWS] Asking {OLLAMA_MODEL} to analyze {len(target)} headline(s) "
+        f"[TECH NEWS] Asking {resolve_ollama_model('tech_news')} to analyze {len(target)} headline(s) "
         f"in batch size {step}..."
     )
 
@@ -1088,7 +1098,7 @@ def main():
     print(f"[TECH NEWS] Tickers: {', '.join(tickers)}")
     llm_enabled = TECH_NEWS_LLM_ENABLED and not args.no_llm
     relevance_enabled = TECH_NEWS_RELEVANCE_FILTER_ENABLED and not args.no_relevance_filter
-    print(f"[TECH NEWS] Ollama analysis: {'ON' if llm_enabled else 'OFF'} ({OLLAMA_MODEL})")
+    print(f"[TECH NEWS] Ollama analysis: {'ON' if llm_enabled else 'OFF'} ({resolve_ollama_model('tech_news')})")
     print(
         f"[TECH NEWS] Relevance filter: {'ON' if relevance_enabled else 'OFF'} "
         f"(min_score={args.relevance_min_score})"

@@ -1,6 +1,6 @@
 # Alpha Engine Integration Audit
 
-Last reviewed: 2026-06-05
+Last reviewed: 2026-06-11
 
 ## System Shape
 
@@ -26,20 +26,24 @@ The project has four main layers:
 | Signal context | `context_enrichment.py` | `signal_context` | Execution detail | Integrated |
 | Signal journal | `signal_journal.py` | `signal_journal` | Metrics tab | Integrated |
 | Trade events | `main.py` | `trade_events` | Metrics tab | Integrated |
-| Daily briefing | `daily_market_briefing.py` | `daily_market_briefings` | Control tab | Integrated, manual workflow |
-| Post-trade review | `post_trade_review.py` | `post_trade_reviews` | Metrics tab | Integrated, manual workflow |
-| Strategy optimizer | `strategy_optimizer.py` | `strategy_optimizer_runs` | Control tab | Integrated, manual workflow |
+| Daily briefing | `daily_market_briefing.py` | `daily_market_briefings` | Control tab | Integrated, scheduled evening workflow |
+| Post-trade review | `post_trade_review.py` | `post_trade_reviews` | Metrics tab | Integrated, scheduled evening workflow |
+| Strategy optimizer | `strategy_optimizer.py` | `strategy_optimizer_runs` | Control tab | Integrated, scheduled evening workflow |
+| Runtime config | `runtime_config_sync.py`, `master_scanner.py` | `bot_runtime_config` | Control tab | Integrated |
+| System heartbeat | `system_status.py`, `master_scanner.py` | `system_status` | Future Health tab | Producer integrated |
+| Loop visibility | `master_scanner.py`, `routing_status.py` | console, `system_status` | Terminal now, future Health tab | Integrated |
 | Repo sync | `repo_sync.py` | GitHub | Windows/Mac workflow | Integrated |
 
 ## Loose Ends
 
 1. **Runtime settings duplication**
-   - SignalCenter `BotRuntimeConfig.swift` mirrors important `.env` defaults such as quantity, stop loss, take profit, category limits, and gate thresholds.
-   - Better target: publish runtime config to Supabase so the iPad displays actual bot settings, not hardcoded defaults.
+   - Fixed: `runtime_config_sync.py` publishes risk, scanner, session, LLM, and performance settings to `bot_runtime_config`.
+   - Fixed: SignalCenter Control reads that snapshot and falls back to `BotRuntimeConfig.swift` only if Supabase is unavailable.
 
-2. **Manual workflow scheduling**
-   - `review-cycle` exists but is not automatically scheduled by `master_scanner.py`.
-   - Better target: run an evening review once after regular close: `journal`, `post-trade-review`, `strategy-optimizer`, and `briefing`.
+2. **Evening workflow scheduling**
+   - Fixed: `master_scanner.py` runs `review-cycle` once per market date at or after `MASTER_EVENING_REVIEW_TIME`.
+   - Fixed: `master_scanner.py` now publishes per-step status to `system_status`.
+   - Remaining target: render those rows in a SignalCenter Health surface.
 
 3. **Daily startup timing**
    - `master_scanner.py` runs `daily-cycle` on market-date rollover and also runs a 05:30 category refresh.
@@ -59,9 +63,6 @@ The project has four main layers:
 
 ## Recommended Next Integration Passes
 
-1. Add a Supabase-backed `bot_runtime_config` or `bot_settings` expansion and have SignalCenter read actual risk/runtime settings.
-2. Add an evening scheduled workflow to `master_scanner.py` for reviews, optimizer, and briefing.
-3. Add a `system_status` table so the bot can publish last run timestamps, failures, and active mode for the iPad.
-4. Add Health tab/status cards in SignalCenter for scanner freshness, TWS connection, Ollama model, Supabase tables, and latest errors.
-5. Tighten Supabase RLS/auth for `live_holdings` and other writeable tables.
-6. Add a Mac-side build check to the repo sync workflow or require one before pushing SignalCenter release changes.
+1. Add Health tab/status cards in SignalCenter for scanner freshness, TWS connection, Ollama model, Supabase tables, and latest errors.
+2. Tighten Supabase RLS/auth for `live_holdings` and other writeable tables.
+3. Add a Mac-side build check to the repo sync workflow or require one before pushing SignalCenter release changes.

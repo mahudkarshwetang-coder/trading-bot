@@ -346,6 +346,17 @@ def print_profile_notice(key, prefix="[PERFORMANCE]"):
     return profile
 
 
+def print_compute_notice(key, detail, model=None, prefix="[COMPUTE]"):
+    now = time.monotonic()
+    last = float(_NOTICE_CACHE.get(f"compute:{key}") or 0)
+    if now - last < 120:
+        return
+
+    model_text = f" Model: {model}." if model else ""
+    print(f"{prefix} Heavy compute starting: {detail}.{model_text} Avoid gaming until this step finishes.")
+    _NOTICE_CACHE[f"compute:{key}"] = now
+
+
 def clamp_int(value, cap, minimum=1):
     try:
         numeric = int(value)

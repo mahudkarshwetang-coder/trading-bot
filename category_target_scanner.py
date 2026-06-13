@@ -1,10 +1,13 @@
+import json
 import os
 from collections import defaultdict
+from pathlib import Path
 
 from config import (
     CATEGORY_MIN_SCORE,
     CATEGORY_TARGET_LIMIT,
     CATEGORY_TARGETS_PER_CATEGORY,
+    PURE_TRAINING_ADAPTATION_PATH,
     get_supabase_client,
 )
 
@@ -64,6 +67,63 @@ def fetch_category_rows(category, per_category, min_score):
     return response.data or []
 
 
+def load_pure_training_adjustments():
+    path = Path(PURE_TRAINING_ADAPTATION_PATH)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:
+        print(f"Pure training adaptation ignored; could not read {path}: {exc}")
+        return {}
+
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def adjustment_for_row(row, adjustments):
+    ticker = str(row.get("ticker") or "").upper()
+    category = row.get("category") or ""
+    ticker_adjustments = adjustments.get("ticker_adjustments") or {}
+    category_adjustments = adjustments.get("category_adjustments") or {}
+    cooldowns = adjustments.get("cooldowns") or {}
+
+    if ticker in cooldowns:
+        return -100.0, "cooldown"
+
+    adjustment = 0.0
+    reasons = []
+    ticker_delta = ticker_adjustments.get(ticker)
+    if isinstance(ticker_delta, (int, float)):
+        adjustment += float(ticker_delta)
+        reasons.append(f"ticker {ticker_delta:+.1f}")
+    category_delta = category_adjustments.get(category)
+    if isinstance(category_delta, (int, float)):
+        adjustment += float(category_delta)
+        reasons.append(f"category {category_delta:+.1f}")
+    return adjustment, ", ".join(reasons)
+
+
+def adjusted_score(row, adjustments):
+    try:
+        base_score = float(row.get("category_score") or 0.0)
+    except (TypeError, ValueError):
+        base_score = 0.0
+    adjustment, reason = adjustment_for_row(row, adjustments)
+    score = max(0.0, min(100.0, base_score + adjustment))
+    row["_adjusted_category_score"] = score
+    row["_adjustment_reason"] = reason
+    return score
+
+
+def safe_number(value):
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def fetch_category_targets(
     limit=CATEGORY_TARGET_LIMIT,
     per_category=CATEGORY_TARGETS_PER_CATEGORY,
@@ -75,6 +135,10 @@ def fetch_category_targets(
     )
     selected = []
     seen = set()
+    adjustments = load_pure_training_adjustments()
+    if adjustments:
+        generated_at = adjustments.get("generated_at") or "unknown"
+        print(f"Pure training adaptation loaded from {PURE_TRAINING_ADAPTATION_PATH} ({generated_at}).")
 
     for category in DEFAULT_CATEGORIES:
         try:
@@ -87,17 +151,34 @@ def fetch_category_targets(
             continue
 
         print(f"Category pool: {category} -> {len(rows)} candidate row(s)")
+        if adjustments:
+            rows = sorted(
+                rows,
+                key=lambda row: (
+                    adjusted_score(row, adjustments),
+                    safe_number(row.get("market_cap")),
+                ),
+                reverse=True,
+            )
         count = 0
         for row in rows:
             ticker = row.get("ticker")
             if not ticker or ticker in seen:
                 continue
+            if row.get("_adjustment_reason") == "cooldown":
+                print(f"   {ticker:<6} {category:<15} skipped by pure-training cooldown")
+                continue
             selected.append(row)
             seen.add(ticker)
             count += 1
+            score = row.get("_adjusted_category_score", row.get("category_score"))
+            reason = row.get("_adjustment_reason")
+            score_text = f"score={score}"
+            if reason:
+                score_text += f" ({reason})"
             print(
                 f"   {ticker:<6} {category:<15} {row.get('theme', ''):<28} "
-                f"score={row.get('category_score')} {row.get('company_name', '')}"
+                f"{score_text} {row.get('company_name', '')}"
             )
             if count >= per_category or len(selected) >= limit:
                 break

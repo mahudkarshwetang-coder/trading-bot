@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 import re
 
 from config import SIGNAL_COOLDOWN_MINUTES
+from local_data_recorder import append_local_event
 
 ACTIVE_DUPLICATE_STATUSES = {"pending", "approved"}
 
@@ -98,19 +99,66 @@ def insert_signal_with_cooldown(
         active_status = active_signal_exists(supabase, ticker, action, channel)
         if active_status:
             print(f"Skipping duplicate {action} signal for {ticker}; existing {active_status} signal is still active.")
+            append_local_event(
+                "signal_skipped",
+                {
+                    "reason": "active_duplicate",
+                    "existing_status": active_status,
+                    "ticker": ticker,
+                    "action": action,
+                    "channel": channel,
+                    "payload": payload,
+                },
+                source="signal_utils",
+            )
             return False
 
         if same_news_context_exists(supabase, ticker, action, channel, context_fragments):
             print(f"Skipping duplicate {action} signal for {ticker}; news context has not changed.")
+            append_local_event(
+                "signal_skipped",
+                {
+                    "reason": "same_news_context",
+                    "ticker": ticker,
+                    "action": action,
+                    "channel": channel,
+                    "context_fragments": context_fragments or [],
+                    "payload": payload,
+                },
+                source="signal_utils",
+            )
             return False
     except Exception as exc:
         print(f"Extended duplicate-signal check failed for {ticker}: {exc}")
 
     if signal_recently_exists(supabase, ticker, action, channel, minutes):
         print(f"Skipping duplicate {action} signal for {ticker}; cooldown is {minutes} minutes.")
+        append_local_event(
+            "signal_skipped",
+            {
+                "reason": "cooldown",
+                "cooldown_minutes": minutes,
+                "ticker": ticker,
+                "action": action,
+                "channel": channel,
+                "payload": payload,
+            },
+            source="signal_utils",
+        )
         return False
 
     response = supabase.table("market_signals").insert(payload).execute()
+    append_local_event(
+        "signal_inserted",
+        {
+            "ticker": ticker,
+            "action": action,
+            "channel": channel,
+            "payload": payload,
+            "insert_response": response.data or [],
+        },
+        source="signal_utils",
+    )
     try:
         from signal_journal import record_signal
 

@@ -9,6 +9,7 @@ from config import (
     OLLAMA_MODEL,
     OLLAMA_URL,
     SIGNAL_QUALITY_FAIL_OPEN,
+    SIGNAL_QUALITY_FAIL_OPEN_ON_PARSE_ERROR,
     SIGNAL_QUALITY_FILTER_ENABLED,
     SIGNAL_QUALITY_KEEP_ALIVE,
     SIGNAL_QUALITY_MIN_SCORE,
@@ -16,8 +17,10 @@ from config import (
     SIGNAL_QUALITY_RETRY_ATTEMPTS,
     SIGNAL_QUALITY_RETRY_BACKOFF_SECONDS,
     SIGNAL_QUALITY_TIMEOUT_SECONDS,
+    resolve_ollama_model,
 )
 from llm_metrics import record_llm_metric
+from local_data_recorder import append_local_event
 from performance_governor import adjust_ollama_runtime, gaming_budget_pause, print_profile_notice
 
 
@@ -47,6 +50,25 @@ def extract_json_object(text):
         if start >= 0 and end > start:
             return json.loads(cleaned[start:end + 1])
         raise
+
+
+def is_output_parse_error(exc):
+    if isinstance(exc, json.JSONDecodeError):
+        return True
+
+    message = str(exc).lower()
+    return any(
+        fragment in message
+        for fragment in (
+            "unterminated string",
+            "expecting ',' delimiter",
+            "expecting property name",
+            "expecting value",
+            "extra data",
+            "invalid control character",
+            "json",
+        )
+    )
 
 
 def ollama_chat_url():
@@ -208,8 +230,10 @@ def review_signal_quality(payload, headlines=None, reasoning=None):
     if runtime["profile"].active:
         gaming_budget_pause("signal_quality", estimated_work_seconds=0.5, critical=True)
 
+    model_name = resolve_ollama_model("signal_quality", gaming=runtime["profile"].active)
+    num_predict = max(128, int(runtime["num_predict"]))
     request_payload = {
-        "model": OLLAMA_MODEL,
+        "model": model_name,
         "prompt": build_quality_prompt(payload, headlines=headlines, reasoning=reasoning),
         "format": "json",
         "stream": False,
@@ -217,7 +241,7 @@ def review_signal_quality(payload, headlines=None, reasoning=None):
         "think": False,
         "options": {
             "temperature": 0.0,
-            "num_predict": max(48, int(runtime["num_predict"])),
+            "num_predict": num_predict,
         },
     }
     chat_payload = {
@@ -274,7 +298,7 @@ def review_signal_quality(payload, headlines=None, reasoning=None):
                 record_llm_metric(
                     source="signal_quality_filter",
                     task="quality_gate",
-                    model=OLLAMA_MODEL,
+                    model=model_name,
                     duration_seconds=time.perf_counter() - started_at,
                     success=True,
                     endpoint=endpoint_label,
@@ -282,10 +306,29 @@ def review_signal_quality(payload, headlines=None, reasoning=None):
                     batch_size=1,
                     attempts=attempt,
                     timeout_seconds=timeout_seconds,
-                    num_predict=max(48, int(runtime["num_predict"])),
+                    num_predict=num_predict,
                     prompt_chars=len(request_payload["prompt"]),
                     response_chars=len(raw_json_string),
                     extra={"ticker": ticker, "action": action},
+                )
+                append_local_event(
+                    "signal_quality_gate",
+                    {
+                        "ticker": ticker,
+                        "action": action,
+                        "channel": payload.get("channel"),
+                        "approved": decision.get("approved"),
+                        "decision": decision,
+                        "prompt": request_payload["prompt"],
+                        "raw_response": raw_json_string,
+                        "model": model_name,
+                        "endpoint": endpoint_label,
+                        "attempts": attempt,
+                        "timeout_seconds": timeout_seconds,
+                        "num_predict": num_predict,
+                        "signal_payload": payload,
+                    },
+                    source="signal_quality_filter",
                 )
                 break
             except Exception as exc:
@@ -303,7 +346,7 @@ def review_signal_quality(payload, headlines=None, reasoning=None):
         record_llm_metric(
             source="signal_quality_filter",
             task="quality_gate",
-            model=OLLAMA_MODEL,
+            model=model_name,
             duration_seconds=time.perf_counter() - started_at,
             success=False,
             endpoint=endpoint_label,
@@ -311,13 +354,14 @@ def review_signal_quality(payload, headlines=None, reasoning=None):
             batch_size=1,
             attempts=attempt or attempts,
             timeout_seconds=timeout_seconds,
-            num_predict=max(48, int(runtime["num_predict"])),
+            num_predict=num_predict,
             prompt_chars=len(request_payload["prompt"]),
             response_chars=len(raw_json_string),
             error=exc,
             extra={"ticker": ticker, "action": action},
         )
-        if SIGNAL_QUALITY_FAIL_OPEN:
+        parse_error = is_output_parse_error(exc)
+        if SIGNAL_QUALITY_FAIL_OPEN and (SIGNAL_QUALITY_FAIL_OPEN_ON_PARSE_ERROR or not parse_error):
             decision = dict(DEFAULT_DECISION)
             decision.update(
                 {
@@ -327,10 +371,62 @@ def review_signal_quality(payload, headlines=None, reasoning=None):
                     "rationale": f"Quality filter unavailable; fail-open enabled: {exc}",
                 }
             )
+            append_local_event(
+                "signal_quality_gate",
+                {
+                    "ticker": ticker,
+                    "action": action,
+                    "channel": payload.get("channel"),
+                    "approved": True,
+                    "decision": decision,
+                    "error": str(exc),
+                    "parse_error": parse_error,
+                    "fail_open": True,
+                    "prompt": request_payload["prompt"],
+                    "raw_response": raw_json_string,
+                    "model": model_name,
+                    "endpoint": endpoint_label,
+                    "attempts": attempt or attempts,
+                    "timeout_seconds": timeout_seconds,
+                    "num_predict": num_predict,
+                    "signal_payload": payload,
+                },
+                source="signal_quality_filter",
+            )
             return True, decision, apply_quality_to_memo(payload, decision)
 
         decision = dict(DEFAULT_DECISION)
-        decision.update({"approved": False, "rationale": f"Quality filter unavailable: {exc}"})
+        if parse_error:
+            decision.update(
+                {
+                    "approved": False,
+                    "rationale": f"Quality filter returned malformed output; blocked before execution queue: {exc}",
+                }
+            )
+        else:
+            decision.update({"approved": False, "rationale": f"Quality filter unavailable: {exc}"})
+        append_local_event(
+            "signal_quality_gate",
+            {
+                "ticker": ticker,
+                "action": action,
+                "channel": payload.get("channel"),
+                "approved": False,
+                "decision": decision,
+                "error": str(exc),
+                "parse_error": parse_error,
+                "fail_open": False,
+                "prompt": request_payload["prompt"],
+                "raw_response": raw_json_string,
+                "model": model_name,
+                "endpoint": endpoint_label,
+                "attempts": attempt or attempts,
+                "timeout_seconds": timeout_seconds,
+                "num_predict": num_predict,
+                "signal_payload": payload,
+            },
+            source="signal_quality_filter",
+        )
         return False, decision, apply_quality_to_memo(payload, decision)
 
     apply_quality_to_memo(payload, decision)

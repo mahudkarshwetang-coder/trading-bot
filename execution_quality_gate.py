@@ -16,8 +16,10 @@ from config import (
     EXECUTION_GATE_TIMEOUT_SECONDS,
     OLLAMA_MODEL,
     OLLAMA_URL,
+    resolve_ollama_model,
 )
 from llm_metrics import record_llm_metric
+from local_data_recorder import append_local_event
 from performance_governor import adjust_ollama_runtime, gaming_budget_pause, print_profile_notice
 
 
@@ -83,6 +85,13 @@ def clamp_score(value):
         return 0
 
 
+def first_present(raw, *keys):
+    for key in keys:
+        if key in raw and raw.get(key) is not None:
+            return raw.get(key)
+    return None
+
+
 def normalize_bool(value):
     if isinstance(value, bool):
         return value
@@ -100,7 +109,19 @@ def normalize_execution_decision(raw):
     if not isinstance(raw, dict):
         raw = {}
 
-    execution_score = clamp_score(raw.get("execution_score"))
+    score_value = first_present(
+        raw,
+        "execution_score",
+        "score",
+        "approval_score",
+        "trade_score",
+        "confidence_score",
+        "confidence",
+    )
+    raw_approved = normalize_bool(raw.get("approved", False))
+    if score_value is None and raw_approved:
+        score_value = EXECUTION_GATE_MIN_SCORE
+    execution_score = clamp_score(score_value)
     decision = {
         "approved": normalize_bool(raw.get("approved", execution_score >= EXECUTION_GATE_MIN_SCORE)),
         "execution_score": execution_score,
@@ -211,9 +232,11 @@ def review_execution_quality(signal, context):
     if runtime["profile"].active:
         gaming_budget_pause("execution_gate", estimated_work_seconds=0.5, critical=True)
 
+    model_name = resolve_ollama_model("execution_gate", gaming=runtime["profile"].active)
+    num_predict = max(160, int(runtime["num_predict"]))
     prompt = build_execution_prompt(context)
     request_payload = {
-        "model": OLLAMA_MODEL,
+        "model": model_name,
         "prompt": prompt,
         "format": "json",
         "stream": False,
@@ -221,7 +244,7 @@ def review_execution_quality(signal, context):
         "think": False,
         "options": {
             "temperature": 0.0,
-            "num_predict": max(64, int(runtime["num_predict"])),
+            "num_predict": num_predict,
         },
     }
     chat_payload = {
@@ -266,7 +289,7 @@ def review_execution_quality(signal, context):
                 record_llm_metric(
                     source="execution_quality_gate",
                     task="execution_gate",
-                    model=OLLAMA_MODEL,
+                    model=model_name,
                     duration_seconds=time.perf_counter() - started_at,
                     success=True,
                     endpoint=endpoint_label,
@@ -274,10 +297,28 @@ def review_execution_quality(signal, context):
                     batch_size=1,
                     attempts=attempt,
                     timeout_seconds=timeout_seconds,
-                    num_predict=max(64, int(runtime["num_predict"])),
+                    num_predict=num_predict,
                     prompt_chars=len(prompt),
                     response_chars=len(raw_json_string),
                     extra={"ticker": ticker, "action": action},
+                )
+                append_local_event(
+                    "execution_quality_gate",
+                    {
+                        "ticker": ticker,
+                        "action": action,
+                        "approved": decision.get("approved"),
+                        "decision": decision,
+                        "context": context,
+                        "prompt": prompt,
+                        "raw_response": raw_json_string,
+                        "model": model_name,
+                        "endpoint": endpoint_label,
+                        "attempts": attempt,
+                        "timeout_seconds": timeout_seconds,
+                        "num_predict": num_predict,
+                    },
+                    source="execution_quality_gate",
                 )
                 break
             except Exception as exc:
@@ -295,7 +336,7 @@ def review_execution_quality(signal, context):
         record_llm_metric(
             source="execution_quality_gate",
             task="execution_gate",
-            model=OLLAMA_MODEL,
+            model=model_name,
             duration_seconds=time.perf_counter() - started_at,
             success=False,
             endpoint=endpoint_label,
@@ -303,7 +344,7 @@ def review_execution_quality(signal, context):
             batch_size=1,
             attempts=attempt or attempts,
             timeout_seconds=timeout_seconds,
-            num_predict=max(64, int(runtime["num_predict"])),
+            num_predict=num_predict,
             prompt_chars=len(prompt),
             response_chars=len(raw_json_string),
             error=exc,
@@ -320,9 +361,49 @@ def review_execution_quality(signal, context):
                     "rationale": f"Execution gate unavailable; fail-open enabled: {exc}",
                 }
             )
+            append_local_event(
+                "execution_quality_gate",
+                {
+                    "ticker": ticker,
+                    "action": action,
+                    "approved": True,
+                    "decision": decision,
+                    "context": context,
+                    "prompt": prompt,
+                    "raw_response": raw_json_string,
+                    "error": str(exc),
+                    "fail_open": True,
+                    "model": model_name,
+                    "endpoint": endpoint_label,
+                    "attempts": attempt or attempts,
+                    "timeout_seconds": timeout_seconds,
+                    "num_predict": num_predict,
+                },
+                source="execution_quality_gate",
+            )
             return True, decision, apply_execution_to_memo(signal, decision)
 
         decision.update({"approved": False, "rationale": f"Execution gate unavailable: {exc}"})
+        append_local_event(
+            "execution_quality_gate",
+            {
+                "ticker": ticker,
+                "action": action,
+                "approved": False,
+                "decision": decision,
+                "context": context,
+                "prompt": prompt,
+                "raw_response": raw_json_string,
+                "error": str(exc),
+                "fail_open": False,
+                "model": model_name,
+                "endpoint": endpoint_label,
+                "attempts": attempt or attempts,
+                "timeout_seconds": timeout_seconds,
+                "num_predict": num_predict,
+            },
+            source="execution_quality_gate",
+        )
         return False, decision, apply_execution_to_memo(signal, decision)
 
     apply_execution_to_memo(signal, decision)

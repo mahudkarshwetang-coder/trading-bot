@@ -22,12 +22,14 @@ from config import (
     OLLAMA_MODEL,
     OLLAMA_URL,
     get_supabase_client,
+    resolve_ollama_model,
 )
 from llm_metrics import record_llm_metric
 from performance_governor import (
     adjust_ollama_runtime,
     adjust_ticker_count,
     gaming_budget_pause,
+    print_compute_notice,
     print_profile_notice,
 )
 from signal_quality_filter import review_signal_quality
@@ -169,8 +171,9 @@ def validate_analysis_scope(ticker, analysis, reasoning, headlines):
 
 def warm_ollama_model():
     """Warm model weights into memory to reduce first-request latency spikes."""
+    model_name = resolve_ollama_model("llm_scanner")
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": model_name,
         "prompt": "Return strict JSON: {\"ok\": true}",
         "format": "json",
         "stream": False,
@@ -201,10 +204,11 @@ def warm_ollama_model_safe():
         print("[LLM SCANNER] Ollama warm-up skipped by performance governor.")
         return
 
+    model_name = resolve_ollama_model("llm_scanner", gaming=runtime["profile"].active)
     try:
         if ollama_uses_chat_endpoint():
             payload = {
-                "model": OLLAMA_MODEL,
+                "model": model_name,
                 "messages": [{"role": "user", "content": "Return strict JSON: {\"ok\": true}"}],
                 "format": "json",
                 "stream": False,
@@ -215,7 +219,7 @@ def warm_ollama_model_safe():
             requests.post(OLLAMA_URL, json=payload, timeout=max(20, int(runtime["timeout_seconds"]))).raise_for_status()
         else:
             payload = {
-                "model": OLLAMA_MODEL,
+                "model": model_name,
                 "prompt": "Return strict JSON: {\"ok\": true}",
                 "format": "json",
                 "stream": False,
@@ -299,9 +303,10 @@ Return only minified JSON with:
 
     num_predict = max(64, int(runtime["num_predict"]))
     gaming_budget_pause("llm_scanner_qwen", estimated_work_seconds=2.0)
+    model_name = resolve_ollama_model("llm_scanner", gaming=runtime["profile"].active)
     
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": model_name,
         "prompt": prompt,
         "format": build_analysis_schema(),
         "stream": False,
@@ -386,7 +391,7 @@ Return only minified JSON with:
             record_llm_metric(
                 source="llm_scanner",
                 task="ticker_sentiment",
-                model=OLLAMA_MODEL,
+                model=model_name,
                 duration_seconds=time.perf_counter() - started_at,
                 success=True,
                 endpoint=endpoint_label,
@@ -415,7 +420,7 @@ Return only minified JSON with:
     record_llm_metric(
         source="llm_scanner",
         task="ticker_sentiment",
-        model=OLLAMA_MODEL,
+        model=model_name,
         duration_seconds=time.perf_counter() - started_at,
         success=False,
         endpoint=endpoint_label,
@@ -515,6 +520,12 @@ def push_signal_to_ipad(ticker, action, score, reasoning, headlines, channel, ta
         print(f"🚨 Supabase Upload Error: {e}")
 
 def run_llm_scan():
+    print_compute_notice(
+        "llm_scanner",
+        "LLM scanner pass across the active target pool",
+        model=resolve_ollama_model("llm_scanner"),
+        prefix="[LLM SCANNER]",
+    )
     print("🧠 Fetching configuration profile from iPad Command Center...")
     
     # --- RAG SYNC TRIGGER ---
@@ -581,7 +592,7 @@ def run_llm_scan():
             if not headlines:
                 continue
                 
-            print(f"[LLM SCANNER] Asking {OLLAMA_MODEL} to analyze context locally...")
+            print(f"[LLM SCANNER] Asking {resolve_ollama_model('llm_scanner')} to analyze context locally...")
             score, reasoning = ask_local_analyst(ticker, headlines)
 
             if reasoning == "Failed to analyze locally.":

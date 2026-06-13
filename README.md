@@ -9,6 +9,62 @@ This project is a Python signal pipeline for scanning equities, writing trade id
 - Test scripts are read-only by default. Use `--write` only when you intentionally want them to update Supabase rows.
 - Supabase credentials should live only in `.env`.
 
+## Operating Modes
+
+The bot is organized around two operator-facing modes:
+
+- **Experimental mode** is the riskier paper-account basket experiment. It refreshes `category-universe`, builds the dynamic category shortlist, runs scanner/context enrichment, and only sends bracket BUY orders for shortlisted tickers with at least `EXPERIMENTAL_MIN_MONTHLY_VOLATILITY_PCT` one-month volatility.
+- **Training mode** is the standard master-scanner profile. It runs the existing scanner loop, signal queue, Qwen gates, journal, broker sync, and strategy feedback pipeline.
+
+Experimental mode still uses the proven `pure_training_mode.py` execution internals for compatibility, but the command and SignalCenter language should be treated as **Experimental** going forward.
+
+Experimental guardrails:
+
+- buys only, 2 shares per shortlisted ticker by default;
+- uses the active bracket settings, currently 2% stop loss and 4% take profit;
+- requires at least 5% one-month volatility by default;
+- skips tickers already held or already queued with an open BUY order in the same market session;
+- checks available funds and current open exposure against the 1,000,000 CAD paper-account cap, using `PURE_TRAINING_USD_CAD_RATE` for US-stock notional estimates;
+- writes local JSONL experiment records to `data/experimental_runs.jsonl` by default;
+- syncs IBKR broker positions during and after the basket run;
+- writes `data/pure_training_adaptation.json` during review so tomorrow's category shortlist can lightly boost what worked and cool down what failed.
+
+Dry-run test:
+
+```powershell
+python master_scanner.py experimental-cycle --dry-run
+```
+
+Continuous experimental engine:
+
+```powershell
+python master_scanner.py experimental-engine
+```
+
+This runs the experimental basket once per day at or after `MASTER_DAILY_CATEGORY_REFRESH_TIME`, monitors TWS every `PURE_TRAINING_MONITOR_INTERVAL_SECONDS` seconds, and runs `experimental-review` at `PURE_TRAINING_REVIEW_TIME`.
+
+Continuous training engine:
+
+```powershell
+python master_scanner.py training-engine
+```
+
+## iPad Script Launcher
+
+SignalCenter can queue approved Windows script launches through Supabase. Run this once on the Windows PC and leave it open:
+
+```powershell
+python script_launcher.py
+```
+
+The launcher watches `public.script_launch_requests` and opens each allowed script in its own PowerShell window. Run this SQL once if the table is missing:
+
+```sql
+-- supabase/script_launch_requests.sql
+```
+
+Allowed script keys include `execution-bridge` (`python main.py`), `training-engine`, `experimental-engine`, `daily-cycle`, `category-refresh`, `experimental-cycle`, `experimental-review`, `tech-news-monitor`, and `health-check`.
+
 ## Required Services
 
 - Supabase project with `bot_settings` and `market_signals` tables.
@@ -60,8 +116,15 @@ SYNC_BROKER_AFTER_ORDER=true
 SYNC_BROKER_AFTER_ORDER_DELAY_SECONDS=2
 OLLAMA_URL=http://localhost:11434/api/chat
 OLLAMA_MODEL=qwen3.5:latest
-PERFORMANCE_GOVERNOR_ENABLED=true
-PERFORMANCE_MODE=auto
+OLLAMA_MODEL_ROUTING_ENABLED=true
+OLLAMA_LIVE_MODEL=nemotron-3-nano:4b
+OLLAMA_SCANNER_MODEL=qwen3.5:latest
+OLLAMA_NEWS_MODEL=nemotron-3-nano:4b
+OLLAMA_DEEP_MODEL=qwen3.6:latest
+OLLAMA_EDGE_MODEL=nemotron-3-nano:4b
+OLLAMA_GAMING_MODEL=nemotron-3-nano:4b
+PERFORMANCE_GOVERNOR_ENABLED=false
+PERFORMANCE_MODE=normal
 PERFORMANCE_GAME_PROCESS_NAMES=cs2.exe,valorant.exe,fortniteclient-win64-shipping.exe,cod.exe,cod22-cod.exe,r5apex.exe,overwatch.exe,destiny2.exe,helldivers2.exe,thefinals.exe,gta5.exe,eldenring.exe,cyberpunk2077.exe,starfield.exe,minecraft.exe,robloxplayerbeta.exe
 PERFORMANCE_BUSY_CPU_PCT=78
 PERFORMANCE_LOW_MEMORY_GB=10
@@ -75,7 +138,7 @@ PERFORMANCE_GAMING_MAX_WORKERS=1
 PERFORMANCE_GAMING_MAX_LLM_TICKERS=5
 PERFORMANCE_GAMING_INTERVAL_MULTIPLIER=6
 PERFORMANCE_GAMING_CPU_BUDGET_PCT=10
-PERFORMANCE_GAMING_THROTTLE_ENABLED=true
+PERFORMANCE_GAMING_THROTTLE_ENABLED=false
 PERFORMANCE_GAMING_THROTTLE_MIN_SLEEP_SECONDS=2
 PERFORMANCE_GAMING_THROTTLE_MAX_SLEEP_SECONDS=30
 PERFORMANCE_GAMING_PROCESS_PRIORITY=BelowNormal
@@ -85,6 +148,8 @@ PERFORMANCE_RESTORE_PRIORITY_ON_NORMAL=true
 PERFORMANCE_DEFER_TASKS=scanner:llm,operation:ticker-intel,operation:briefing,operation:post-trade-review,operation:category-universe,operation:energy-universe
 LLM_METRICS_ENABLED=true
 LLM_METRICS_PATH=data/llm_metrics.jsonl
+LOCAL_DATA_CAPTURE_ENABLED=true
+LOCAL_DATA_CAPTURE_PATH=data/local_training_events.jsonl
 LLM_SCANNER_TIMEOUT_SECONDS=90
 LLM_SCANNER_RETRY_ATTEMPTS=2
 LLM_SCANNER_RETRY_BACKOFF_SECONDS=2
@@ -94,24 +159,38 @@ LLM_SCANNER_RULES_MAX_CHARS=1800
 LLM_SCANNER_MAX_TICKERS=0
 LLM_SCANNER_MAX_CONSECUTIVE_FAILURES=8
 SIGNAL_QUALITY_FILTER_ENABLED=true
-SIGNAL_QUALITY_MIN_SCORE=65
+SIGNAL_QUALITY_MIN_SCORE=55
 SIGNAL_QUALITY_TIMEOUT_SECONDS=90
 SIGNAL_QUALITY_FAIL_OPEN=true
-SIGNAL_QUALITY_NUM_PREDICT=96
+SIGNAL_QUALITY_FAIL_OPEN_ON_PARSE_ERROR=true
+SIGNAL_QUALITY_NUM_PREDICT=160
 SIGNAL_QUALITY_RETRY_ATTEMPTS=2
 SIGNAL_QUALITY_RETRY_BACKOFF_SECONDS=2
 SIGNAL_QUALITY_KEEP_ALIVE=30m
 EXECUTION_GATE_ENABLED=true
-EXECUTION_GATE_MIN_SCORE=45
-EXECUTION_GATE_FAIL_OPEN=false
+EXECUTION_GATE_MIN_SCORE=25
+EXECUTION_GATE_FAIL_OPEN=true
 EXECUTION_GATE_TIMEOUT_SECONDS=90
-EXECUTION_GATE_NUM_PREDICT=140
+EXECUTION_GATE_NUM_PREDICT=180
 EXECUTION_GATE_RETRY_ATTEMPTS=2
 EXECUTION_GATE_RETRY_BACKOFF_SECONDS=2
 EXECUTION_GATE_KEEP_ALIVE=30m
 SCANNER_INTERVAL_SECONDS=600
 SIGNAL_COOLDOWN_MINUTES=240
+CYCLE_LOG_ENABLED=true
+CYCLE_LOG_PATH=data/master_cycle_log.jsonl
+CYCLE_LOG_PUSH_SUPABASE=true
+CYCLE_LOG_SIGNAL_LIMIT=250
+CYCLE_LOG_EVENT_LIMIT=250
+TECH_RSI_BUY_THRESHOLD=35
+TECH_RSI_SELL_THRESHOLD=75
+TECH_BUY_CONFIDENCE=82
+TECH_SELL_CONFIDENCE=80
+RADAR_TARGET_LIMIT=12
+RADAR_MIN_ABS_MOVE_PCT=1.0
+RADAR_ALLOW_YAHOO_TRENDING_FALLBACK=false
 MASTER_DAILY_CATEGORY_REFRESH_TIME=05:30
+MASTER_EVENING_REVIEW_TIME=16:30
 OPEN_SCANNER_ENABLED=true
 OPEN_SCANNER_START=09:30
 OPEN_SCANNER_END=10:15
@@ -194,13 +273,13 @@ STRATEGY_OPTIMIZER_AUTO_APPLY=false
 MASSIVE_API_KEY=your_massive_api_key
 ```
 
-If you upgrade Ollama models, update `OLLAMA_MODEL` in `.env` to the installed tag. The recommended day-to-day model is `qwen3.5:latest`; use `qwen3.6:latest` for intentional deep research runs when you are not gaming.
+If you upgrade Ollama models, update `OLLAMA_MODEL` in `.env` to the installed tag. The recommended day-to-day fallback model is `qwen3.5:latest`. Model routing is enabled by default: live execution and signal-quality gates use `OLLAMA_LIVE_MODEL=nemotron-3-nano:4b`, normal scanner reasoning uses `OLLAMA_SCANNER_MODEL=qwen3.5:latest`, tech-news analysis uses `OLLAMA_NEWS_MODEL=nemotron-3-nano:4b`, deep briefings/reviews use `OLLAMA_DEEP_MODEL=qwen3.6:latest`, and the future Jetson/edge profile is `OLLAMA_EDGE_MODEL=nemotron-3-nano:4b`. `lfm2.5:8b` is installed and fast, but keep it experimental until it consistently returns parseable JSON for the trading gates.
 
 `LLM_METRICS_ENABLED=true` writes local Qwen/Ollama timing records to `data/llm_metrics.jsonl`. Use `python llm_metrics_report.py` after scanner or briefing runs to see average latency, p50/p95 latency, success rate, and retry pressure by script.
 
-`PERFORMANCE_GOVERNOR_ENABLED=true` lets the bot downshift when Windows looks busy or a configured game process is running. In gaming/quiet mode, the bot behaves like it has a small CPU budget: `PERFORMANCE_GAMING_CPU_BUDGET_PCT=10` adds cooperative sleep between non-critical work, Qwen keep-alive drops to `30s`, tech-news LLM work shrinks to tiny single-item batches, the LLM scanner caps its ticker pass, and the master scheduler defers deep non-critical jobs such as ticker intelligence, briefings, post-trade reviews, and broad universe rebuilding. The governor also lowers this Python process and Ollama/llama-server to `BelowNormal` priority so Windows favors the game.
+`LOCAL_DATA_CAPTURE_ENABLED=true` mirrors high-value training evidence to `data/local_training_events.jsonl`, including signal insert/skip decisions, Qwen quality-gate prompts/responses, execution-gate prompts/responses, normalized gate decisions, execution context, and routing/trade events. This is intentionally local-first so we retain raw training material even when Supabase rows are compact summaries.
 
-This is a best-effort 10% profile, not a hard OS resource jail. Python can throttle itself precisely, but Ollama and GPU scheduling are controlled by Windows and the AMD driver. For a true hard cap, use Windows power/process tools or a utility such as Process Lasso; the built-in governor is designed to slow the bot safely without breaking routing.
+`PERFORMANCE_GOVERNOR_ENABLED=false` keeps the bot out of automatic gaming/quiet mode. Instead, heavy scripts print a terminal warning before broad universe scans, LLM scanner passes, tech-news LLM analysis, ticker-intelligence syncs, market briefings, post-trade reviews, and strategy optimizer work. That gives you a clear heads-up before the bot uses more CPU/GPU, while model routing still chooses efficient models for live trading gates and news work.
 
 Check the current mode:
 
@@ -208,9 +287,11 @@ Check the current mode:
 python performance_status.py
 ```
 
-If your game is not auto-detected, add its `.exe` name to `PERFORMANCE_GAME_PROCESS_NAMES`, or temporarily force quiet mode with `PERFORMANCE_MODE=gaming`. Set `PERFORMANCE_MODE=normal` to force full-speed bot behavior.
+If you ever want to re-enable automatic quiet mode later, set `PERFORMANCE_GOVERNOR_ENABLED=true` and `PERFORMANCE_MODE=auto`. Keep `PERFORMANCE_MODE=normal` for full-speed bot behavior.
 
 `SCANNER_INTERVAL_SECONDS` controls the market-hours recommendation loop. The default is 600 seconds, or 10 minutes. `SIGNAL_COOLDOWN_MINUTES` defaults to 240 minutes, or 4 hours, so repeated ticker/action/channel ideas do not keep refilling the iPad queue.
+
+`CYCLE_LOG_ENABLED=true` writes a training ledger to `data/master_cycle_log.jsonl`. Each master scanner cycle records the cycle type, market session, workflows/scanners/operations run, duration, errors, new signal counts, recent signal statuses, and trade-event/routing deltas. `CYCLE_LOG_PUSH_SUPABASE=true` also syncs compact cycle summaries to `public.scanner_cycles` for future iPad cycle-history views. Run `supabase/scanner_cycles.sql` once in the Supabase SQL Editor before expecting cloud cycle summaries.
 
 Extended-hours scanning is enabled by default with `SCAN_EXTENDED_HOURS=true`, covering `PREMARKET_OPEN` through `AFTER_HOURS_CLOSE` on weekdays. Global overnight scanning is also enabled by default with `SCAN_GLOBAL_OVERNIGHT=true`, covering `GLOBAL_OVERNIGHT_OPEN` through `GLOBAL_OVERNIGHT_CLOSE` Sunday night through Friday morning. This is intended for futures/FX/Asia-sensitive market movement and signal tracking.
 
@@ -236,9 +317,11 @@ Live extended-hours order routing remains disabled unless both `DRY_RUN=false` a
 - `daily_market_briefing.py`: generates morning/evening Qwen briefings from category/news/signal/position/macro data.
 - `post_trade_review.py`: asks Qwen to review closed paper trades and extract training lessons.
 - `strategy_optimizer.py`: turns journal/trade feedback into cautious setting and channel recommendations.
+- `runtime_config_sync.py`: publishes current Windows bot runtime settings to Supabase for the iPad Control tab.
 - `context_enrichment.py`: enriches pending/approved signals with IBKR position, quote, SEC filing, and macro context for the iPad Execution Terminal.
 - `ticker_intelligence.py`: builds a ticker-search intelligence snapshot (news, public chatter proxy, short interest, options tilt, SEC context, and local signal bias) for the iPad research view.
 - `routing_status.py`: read-only routing report showing approved/pending/blocked signals, recent order events, and why nothing is routing.
+- `system_status.py`: publishes and lists bot heartbeat/status rows for iPad health visibility.
 - `signal_journal.py`: tracks accepted scanner signals and scores forward returns for training.
 - `main.py`: IBKR/Supabase execution bridge.
 - `broker_sync.py`: reads live IBKR paper positions and syncs them to Supabase for the iPad Ledger.
@@ -294,10 +377,56 @@ python master_scanner.py categories
 
 When `python master_scanner.py` is running continuously, it also runs `daily-category-refresh` once per day at or after `MASTER_DAILY_CATEGORY_REFRESH_TIME` (default `05:30` Eastern). That workflow runs `category-universe` first, then `categories`, so the iPad/research/watchlist flow starts the morning from the fresh broad universe. Fixed test stocks are not required for normal scanner operation.
 
+The same continuous engine also runs `review-cycle` once per day at or after `MASTER_EVENING_REVIEW_TIME` (default `16:30` Eastern). That evening workflow updates the journal, Qwen post-trade reviews, strategy optimizer recommendations, and the iPad market briefing tables.
+
+The startup `daily-cycle` also syncs the current runtime configuration to `public.bot_runtime_config`, so SignalCenter can display actual Windows bot settings instead of only hardcoded app defaults. Run this SQL once in Supabase:
+
+```sql
+-- supabase/bot_runtime_config.sql
+```
+
+Then sync the current settings:
+
+```powershell
+python runtime_config_sync.py
+```
+
+You can also refresh it through the master gateway:
+
+```powershell
+python master_scanner.py runtime-config
+```
+
+The master gateway also publishes scanner, operation, phase, workflow, and engine heartbeats to `public.system_status`. Run this SQL once in Supabase:
+
+```sql
+-- supabase/system_status.sql
+```
+
+List recent bot status rows:
+
+```powershell
+python system_status.py --list
+```
+
+The master gateway also appends a historical training ledger to `data/master_cycle_log.jsonl` and can push compact summaries to `public.scanner_cycles`. Run this SQL once in Supabase:
+
+```sql
+-- supabase/scanner_cycles.sql
+```
+
+Each summary stores the cycle duration, workflow/scanner/operation outcomes, signal deltas, trade-event deltas, and errors. This is the record we can use later to compare scanner behavior against actual routed orders and paper-trade outcomes.
+
 To force that refresh immediately:
 
 ```powershell
 python master_scanner.py daily-category-refresh
+```
+
+To force the evening review immediately:
+
+```powershell
+python master_scanner.py review-cycle
 ```
 
 ## Tech News Monitor
@@ -585,9 +714,9 @@ During regular, configured extended, and configured global overnight market sess
 
 When the continuous engine is running, `opening_momentum_scanner.py` is checked once per regular-session day inside the configured `OPEN_SCANNER_START`/`OPEN_SCANNER_END` window. It uses its own `OPEN_SCANNER_COOLDOWN_MINUTES` duplicate window because the opening auction is short-lived and should not be treated exactly like the slower all-day scanners.
 
-Before `sentiment_scanner.py` or `llm_scanner.py` inserts a news-driven signal, `signal_quality_filter.py` asks local Qwen whether the catalyst is material, whether it may already be priced in, whether it is company-specific or broader, and whether the scanner confidence is justified. Signals below `SIGNAL_QUALITY_MIN_SCORE` are blocked before they reach the iPad queue. `SIGNAL_QUALITY_FAIL_OPEN=true` keeps scanners running if Ollama is temporarily unavailable; set it to `false` for stricter behavior.
+Before `sentiment_scanner.py` or `llm_scanner.py` inserts a news-driven signal, `signal_quality_filter.py` asks local Qwen whether the catalyst is material, whether it may already be priced in, whether it is company-specific or broader, and whether the scanner confidence is justified. During paper-training mode, `SIGNAL_QUALITY_MIN_SCORE=55` and `SIGNAL_QUALITY_FAIL_OPEN_ON_PARSE_ERROR=true` allow more decent setups through while still recording malformed outputs locally for review. Set `SIGNAL_QUALITY_FAIL_OPEN_ON_PARSE_ERROR=false` later when you want the stricter production posture.
 
-Before `main.py` routes an approved signal to TWS, `execution_quality_gate.py` asks Qwen for a final execution decision using the signal memo, confidence, current price, price drift from signal, session type, bracket risk matrix, quantity, position state, and repeat-buy guard. `EXECUTION_GATE_MIN_SCORE=45` is the default paper-training minimum, another roughly 20% looser step from the previous threshold. `EXECUTION_GATE_FAIL_OPEN=false` is intentionally stricter: if Qwen is unavailable, the execution bridge blocks instead of sending an order.
+Before `main.py` routes an approved signal to TWS, `execution_quality_gate.py` asks Qwen for a final execution decision using the signal memo, confidence, current price, price drift from signal, session type, bracket risk matrix, quantity, position state, and repeat-buy guard. During active paper training, `EXECUTION_GATE_MIN_SCORE=25` and `EXECUTION_GATE_FAIL_OPEN=true` intentionally increase order flow so the bot gathers more execution/outcome data. Hard safety checks such as no unsupported SELLs, repeat-BUY dip guard, bracket exits, fixed 20-share quantity, and configured session routing still remain in place.
 
 Summarize Qwen performance after scanner or execution runs:
 
@@ -811,6 +940,7 @@ On startup, the engine runs `daily-cycle` once per market date, records that mar
 
 ```text
 health preflight
+runtime config sync
 category universe scan
 premarket scanners
 intraday scanners
@@ -819,6 +949,14 @@ context enrichment
 broker position sync
 signal journal update/sync
 ```
+
+During cooldowns and closed-market sleeps, the engine prints the approximate next wake time and refreshes the `master_scanner` heartbeat in `system_status` about once per minute. If a loop looks quiet, run:
+
+```powershell
+python master_scanner.py routing-status
+```
+
+The report includes a `System Heartbeats` section with recent scanner, operation, phase, workflow, and master-loop state.
 
 Force the daily startup cycle again:
 

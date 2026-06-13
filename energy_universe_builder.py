@@ -8,6 +8,7 @@ import pandas as pd
 import yfinance as yf
 
 from config import get_supabase_client
+from performance_governor import print_compute_notice
 
 
 # Broad keyword map for traditional, transition, clean, and futuristic energy exposure.
@@ -256,6 +257,11 @@ def upsert_records(records: List[Dict[str, object]], dry_run: bool = False) -> N
 
 
 def build_energy_universe(limit: int, min_score: float, dry_run: bool) -> List[Dict[str, object]]:
+    print_compute_notice(
+        "energy_universe_builder",
+        f"broad energy-universe rebuild across up to {limit} ticker candidates",
+        prefix="[ENERGY UNIVERSE]",
+    )
     print("🌐 Loading active US ticker candidates...")
     listings = fetch_listed_tickers()
     print(f"✅ Loaded {len(listings)} ticker candidates. Scanning up to {limit}.")

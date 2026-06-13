@@ -18,6 +18,7 @@ from config import (
     STRATEGY_OPTIMIZER_PUSH_SUPABASE,
     get_supabase_client,
 )
+from performance_governor import print_compute_notice
 
 HORIZONS = ("15m", "1h", "1d", "5d")
 MISSING_TABLE_HINT = (
@@ -533,6 +534,11 @@ def run_strategy_optimizer(
     push_supabase=STRATEGY_OPTIMIZER_PUSH_SUPABASE,
     dry_run=False,
 ):
+    print_compute_notice(
+        "strategy_optimizer",
+        "strategy optimizer feedback review",
+        prefix="[OPTIMIZER]",
+    )
     supabase = get_supabase_client()
     record = build_optimizer_record(
         supabase,

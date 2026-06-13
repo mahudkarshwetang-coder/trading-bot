@@ -213,6 +213,36 @@ def fetch_trade_events(supabase, hours, limit):
         return [{"_error": str(exc)}]
 
 
+def fetch_system_status(supabase, limit=12):
+    try:
+        return (
+            supabase.table("system_status")
+            .select("component,status,detail,mode,market_session,heartbeat_at,error")
+            .order("heartbeat_at", desc=True)
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as exc:
+        return [{"_error": str(exc)}]
+
+
+def fetch_scanner_cycles(supabase, limit=8):
+    try:
+        return (
+            supabase.table("scanner_cycles")
+            .select("cycle_id,cycle_type,status,market_session,started_at,finished_at,duration_seconds,signal_summary,trade_event_summary,errors")
+            .order("started_at", desc=True)
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as exc:
+        return [{"_error": str(exc)}]
+
+
 def print_runtime_section(processes, ibkr_ok, ibkr_message, settings):
     main_process = process_for_script(processes, "main.py")
     scanner_process = process_for_script(processes, "master_scanner.py")
@@ -255,6 +285,70 @@ def print_runtime_section(processes, ibkr_ok, ibkr_message, settings):
         )
     print()
     return main_running, scanner_running, main_stale
+
+
+def print_system_status(rows):
+    print("System Heartbeats")
+    print("=" * 92)
+    if not rows:
+        print("None yet. Run master_scanner.py after applying supabase/system_status.sql.")
+        print()
+        return
+
+    if rows[0].get("_error"):
+        print(f"ERROR {rows[0]['_error']}")
+        print()
+        return
+
+    for row in rows:
+        detail = row.get("error") or row.get("detail") or ""
+        session = row.get("market_session") or "-"
+        mode = trim(row.get("mode"), 34)
+        print(
+            f"{short_time(row.get('heartbeat_at'))} | "
+            f"{str(row.get('component') or ''):<28} "
+            f"{str(row.get('status') or ''):<9} "
+            f"session={session:<10} "
+            f"mode={mode}"
+        )
+        if detail:
+            print(f"  {trim(detail, 150)}")
+    print()
+
+
+def print_scanner_cycles(rows):
+    print("Recent Scanner Cycles")
+    print("=" * 92)
+    if not rows:
+        print("None yet. Run master_scanner.py after applying supabase/scanner_cycles.sql.")
+        print()
+        return
+
+    if rows[0].get("_error"):
+        print(f"ERROR {rows[0]['_error']}")
+        print()
+        return
+
+    for row in rows:
+        signal_summary = row.get("signal_summary") or {}
+        event_summary = row.get("trade_event_summary") or {}
+        errors = row.get("errors") or []
+        print(
+            f"{short_time(row.get('started_at'))} | "
+            f"{str(row.get('cycle_type') or ''):<24} "
+            f"{str(row.get('status') or ''):<8} "
+            f"session={str(row.get('market_session') or '-'):<10} "
+            f"duration={row.get('duration_seconds') or '-'}s "
+            f"signals={signal_summary.get('count', 0)} "
+            f"events={event_summary.get('count', 0)} "
+            f"errors={len(errors)}"
+        )
+        tickers = signal_summary.get("tickers") or []
+        if tickers:
+            print(f"  signal tickers: {', '.join(tickers[:12])}")
+        if errors:
+            print(f"  error: {trim(str(errors[0]), 150)}")
+    print()
 
 
 def print_counts(signals, events):
@@ -422,6 +516,8 @@ def main(argv=None):
     approved_rows = fetch_status_rows(supabase, ROUTEABLE_STATUS, limit=args.limit)
     pending_rows = fetch_status_rows(supabase, PENDING_STATUS, limit=args.limit)
     events = fetch_trade_events(supabase, args.hours, args.limit)
+    system_rows = fetch_system_status(supabase, limit=12)
+    cycle_rows = fetch_scanner_cycles(supabase, limit=8)
 
     print("Alpha Engine Routing Status")
     print(f"Lookback: last {args.hours} hour(s)")
@@ -430,6 +526,8 @@ def main(argv=None):
     print()
 
     main_running, _, main_stale = print_runtime_section(processes, ibkr_ok, ibkr_message, settings)
+    print_system_status(system_rows)
+    print_scanner_cycles(cycle_rows)
     print_counts(signals, events)
     print_signal_rows("Approved Queue", approved_rows, limit=12, include_memo=args.show_memos)
     print_signal_rows("Pending Manual Queue", pending_rows, limit=12, include_memo=args.show_memos)
