@@ -156,10 +156,85 @@ def command_to_powershell(command):
     return " ".join(f"& '{ps_single_quote(part)}'" if index == 0 else f"'{ps_single_quote(part)}'" for index, part in enumerate(command))
 
 
+def command_match_parts(command):
+    parts = [str(part) for part in command if str(part).strip()]
+    if parts and parts[0].lower() in {"python", "python.exe", "py", "py.exe"}:
+        parts = parts[1:]
+    return parts
+
+
+def active_pids_for_command(command):
+    parts = command_match_parts(command)
+    if not parts:
+        return []
+
+    patterns = "@(" + ",".join(f"'{ps_single_quote(part)}'" for part in parts) + ")"
+    script = (
+        f"$patterns = {patterns}; "
+        "$self = $PID; "
+        "Get-CimInstance Win32_Process -Filter \"name = 'python.exe' OR name = 'pythonw.exe'\" "
+        "| Where-Object { "
+        "$line = [string]$_.CommandLine; "
+        "$ok = $true; "
+        "foreach ($pattern in $patterns) { if ($line -notlike \"*$pattern*\") { $ok = $false } }; "
+        "$ok -and [int]$_.ProcessId -ne [int]$self "
+        "} | ForEach-Object { $_.ProcessId }"
+    )
+    try:
+        completed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+    except Exception as exc:
+        print(f"[SCRIPT LAUNCHER] Duplicate check skipped for {' '.join(command)}: {exc}")
+        return []
+
+    pids = []
+    for line in completed.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            pids.append(int(line))
+        except ValueError:
+            continue
+    return sorted(set(pids))
+
+
 def launch_script_key(script_key, requested_by="local", request_id=None):
     command = LAUNCH_COMMANDS.get(script_key)
     if command is None:
         raise ValueError(f"Unknown script key: {script_key}")
+
+    existing_pids = active_pids_for_command(command.command)
+    if existing_pids:
+        pid = existing_pids[0]
+        payload = {
+            "request_id": request_id,
+            "script_key": script_key,
+            "title": command.title,
+            "command": list(command.command),
+            "pid": pid,
+            "existing_pids": existing_pids,
+            "requested_by": requested_by,
+            "checked_at": utc_now_iso(),
+        }
+        append_local_event("script_launch_duplicate_blocked", payload, source=SOURCE)
+        publish_system_status(
+            "script_launcher",
+            "success",
+            detail=f"{command.title} is already running; duplicate launch blocked.",
+            metadata=payload,
+        )
+        print(
+            f"[SCRIPT LAUNCHER] {command.title} already running "
+            f"(pid(s): {', '.join(str(item) for item in existing_pids)}). Duplicate launch blocked."
+        )
+        return pid
 
     window_title = f"Alpha Engine - {command.title}"
     script = (

@@ -106,8 +106,16 @@ def running_execution_bridge_pids():
     command = (
         "$pidSelf = "
         + str(os.getpid())
-        + "; Get-CimInstance Win32_Process -Filter \"name = 'python.exe'\" "
-        "| Where-Object { $_.ProcessId -ne $pidSelf -and $_.CommandLine -match '(^|\\s)main\\.py(\\s|$)' } "
+        + "; $exclude = @([int]$pidSelf); "
+        "$current = Get-CimInstance Win32_Process -Filter \"ProcessId = $pidSelf\"; "
+        "while ($current -and $current.ParentProcessId) { "
+        "$parent = Get-CimInstance Win32_Process -Filter \"ProcessId = $($current.ParentProcessId)\"; "
+        "if (-not $parent) { break }; "
+        "$exclude += [int]$parent.ProcessId; "
+        "$current = $parent; "
+        "}; "
+        "Get-CimInstance Win32_Process -Filter \"name = 'python.exe' OR name = 'pythonw.exe'\" "
+        "| Where-Object { $exclude -notcontains [int]$_.ProcessId -and $_.CommandLine -match '(^|[\\\\/\\s])main\\.py([\"'\"'\\s]|$)' } "
         "| ForEach-Object { $_.ProcessId }"
     )
     try:

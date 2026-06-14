@@ -329,6 +329,76 @@ def run_category_universe(dry_run=False):
     return True
 
 
+def local_daily_target_count():
+    target_path = Path("daily_targets.txt")
+    if not target_path.exists():
+        return 0
+    content = target_path.read_text(encoding="utf-8", errors="replace")
+    return len([item for item in content.replace("\n", ",").split(",") if item.strip()])
+
+
+def watchlist_target_count(supabase):
+    try:
+        response = (
+            supabase.table("bot_settings")
+            .select("watchlist")
+            .eq("id", 1)
+            .limit(1)
+            .execute()
+        )
+        rows = response.data or []
+        watchlist = rows[0].get("watchlist") if rows else []
+        return len(watchlist) if isinstance(watchlist, list) else 0
+    except Exception as exc:
+        print(f"[ALPHA ENGINE] Watchlist freshness check skipped: {exc}")
+        return 0
+
+
+def latest_category_universe_snapshot(supabase):
+    try:
+        response = (
+            supabase.table("category_universe")
+            .select("ticker,last_updated,last_seen")
+            .eq("active", True)
+            .order("last_updated", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = response.data or []
+        return rows[0] if rows else {}
+    except Exception as exc:
+        print(f"[ALPHA ENGINE] Category universe freshness check skipped: {exc}")
+        return {}
+
+
+def run_category_universe_if_needed(dry_run=False):
+    from config import get_supabase_client
+
+    supabase = get_supabase_client()
+    local_count = local_daily_target_count()
+    watchlist_count = watchlist_target_count(supabase)
+    shortlist_count = max(local_count, watchlist_count)
+    latest = latest_category_universe_snapshot(supabase)
+    latest_stamp = latest.get("last_updated") or latest.get("last_seen")
+    latest_ticker = latest.get("ticker") or "unknown"
+
+    if latest and shortlist_count > 0:
+        print(
+            "[ALPHA ENGINE] Category universe already available; "
+            f"skipping broad Yahoo refresh for Prepare Basket. "
+            f"latest={latest_stamp or 'unknown'} sample={latest_ticker} "
+            f"shortlist={shortlist_count}"
+        )
+        print("[ALPHA ENGINE] Running scanners against the existing shortlisted targets instead.")
+        return True
+
+    print(
+        "[ALPHA ENGINE] Category universe or shortlist missing; "
+        "running broad Yahoo category-universe refresh once."
+    )
+    return run_category_universe(dry_run=dry_run)
+
+
 def run_ticker_intel(dry_run=False):
     from ticker_intelligence import sync_ticker_intelligence
 
@@ -427,6 +497,7 @@ OPERATIONS = {
     "briefing": run_briefing,
     "energy-universe": run_energy_universe,
     "category-universe": run_category_universe,
+    "category-universe-if-needed": run_category_universe_if_needed,
     "signal-sources": run_signal_sources,
     "ticker-intel": run_ticker_intel,
     "runtime-config": run_runtime_config,
@@ -447,7 +518,7 @@ WORKFLOWS = {
     EXPERIMENTAL_CYCLE_WORKFLOW: [
         "preflight",
         "runtime-config",
-        "category-universe",
+        "category-universe-if-needed",
         "categories",
         "premarket",
         "intraday",
@@ -825,6 +896,7 @@ def run_operation(name, dry_run=False, mark_missing_signals=BROKER_SYNC_MARK_MIS
             "briefing",
             "energy-universe",
             "category-universe",
+            "category-universe-if-needed",
             "signal-sources",
             "ticker-intel",
             "runtime-config",

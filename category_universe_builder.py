@@ -1,16 +1,28 @@
 import argparse
+import json
 import math
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import pandas as pd
 import yfinance as yf
 
-from config import CATEGORY_MIN_SCORE, CATEGORY_UNIVERSE_LIMIT, get_supabase_client
+from config import (
+    CATEGORY_MIN_SCORE,
+    CATEGORY_UNIVERSE_LIMIT,
+    CATEGORY_YAHOO_CACHE_PATH,
+    CATEGORY_YAHOO_CACHE_TTL_HOURS,
+    CATEGORY_YAHOO_DELAY_SECONDS,
+    CATEGORY_YAHOO_MAX_CONSECUTIVE_RATE_LIMITS,
+    get_supabase_client,
+)
 from performance_governor import print_compute_notice
 
-YAHOO_DELAY_SECONDS = 0.15
+YAHOO_DELAY_SECONDS = max(0.0, float(CATEGORY_YAHOO_DELAY_SECONDS))
+CACHE_SCHEMA_VERSION = 1
+RATE_LIMIT_PATTERNS = ("too many requests", "rate limited", "429")
 
 CATEGORY_RULES: Dict[str, Dict[str, Dict[str, object]]] = {
     "Nuclear Energy": {
@@ -341,6 +353,96 @@ EXCLUSION_OVERRIDE_TERMS = [
 ]
 
 
+class YahooRateLimitError(RuntimeError):
+    pass
+
+
+def utc_now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def parse_iso_datetime(value):
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def is_rate_limit_error(exc):
+    message = str(exc).lower()
+    return any(pattern in message for pattern in RATE_LIMIT_PATTERNS)
+
+
+def sanitize_for_json(value):
+    if value is None:
+        return None
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return None
+        return value
+    if isinstance(value, (str, int, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): sanitize_for_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [sanitize_for_json(item) for item in value]
+    return str(value)
+
+
+def load_info_cache(path=CATEGORY_YAHOO_CACHE_PATH):
+    cache_path = Path(path)
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:
+        print(f"[CATEGORY UNIVERSE] Yahoo cache ignored: {exc}")
+        return {}
+
+    if not isinstance(payload, dict):
+        return {}
+    entries = payload.get("entries") if payload.get("schema_version") == CACHE_SCHEMA_VERSION else payload
+    return entries if isinstance(entries, dict) else {}
+
+
+def save_info_cache(cache, path=CATEGORY_YAHOO_CACHE_PATH):
+    try:
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "schema_version": CACHE_SCHEMA_VERSION,
+            "updated_at": utc_now_iso(),
+            "entries": cache,
+        }
+        target.write_text(json.dumps(payload, ensure_ascii=True, sort_keys=True), encoding="utf-8")
+    except Exception as exc:
+        print(f"[CATEGORY UNIVERSE] Yahoo cache write skipped: {exc}")
+
+
+def cached_info_for_ticker(cache, ticker):
+    entry = cache.get(ticker)
+    if not isinstance(entry, dict):
+        return None
+    fetched_at = parse_iso_datetime(entry.get("fetched_at"))
+    if not fetched_at:
+        return None
+    age_hours = (datetime.now(timezone.utc) - fetched_at).total_seconds() / 3600.0
+    if age_hours > max(1, int(CATEGORY_YAHOO_CACHE_TTL_HOURS)):
+        return None
+    info = entry.get("info")
+    return info if isinstance(info, dict) else None
+
+
+def store_cached_info(cache, ticker, info):
+    cache[ticker] = {
+        "fetched_at": utc_now_iso(),
+        "info": sanitize_for_json(info),
+    }
+
+
 def clean_text(value):
     if value is None:
         return ""
@@ -362,17 +464,26 @@ def fetch_listed_tickers():
     return tickers.drop_duplicates().reset_index(drop=True)
 
 
-def fetch_yahoo_info(ticker):
+def fetch_yahoo_info(ticker, cache=None):
+    cache = cache if isinstance(cache, dict) else {}
+    cached = cached_info_for_ticker(cache, ticker)
+    if cached is not None:
+        return cached, "cache"
+
     try:
         info = yf.Ticker(ticker).info
         if not info or info.get("quoteType") not in {"EQUITY", None}:
-            return None
-        return info
+            return None, "empty"
+        store_cached_info(cache, ticker, info)
+        return info, "yahoo"
     except Exception as exc:
+        if is_rate_limit_error(exc):
+            raise YahooRateLimitError(str(exc)) from exc
         print(f"   {ticker}: Yahoo lookup failed: {exc}")
-        return None
+        return None, "error"
     finally:
-        time.sleep(YAHOO_DELAY_SECONDS)
+        if cached is None and YAHOO_DELAY_SECONDS > 0:
+            time.sleep(YAHOO_DELAY_SECONDS)
 
 
 def infer_exchange(info):
@@ -474,12 +585,41 @@ def build_category_universe(limit=CATEGORY_UNIVERSE_LIMIT, min_score=CATEGORY_MI
     print(f"Loaded {len(listings)} ticker candidates. Scanning up to {limit}.")
     records = []
     scanned = 0
+    cache = load_info_cache()
+    cache_dirty = False
+    consecutive_rate_limits = 0
+    cache_hits = 0
+    yahoo_hits = 0
 
     for ticker in listings["ticker"].head(limit):
         scanned += 1
-        info = fetch_yahoo_info(ticker)
+        try:
+            info, source = fetch_yahoo_info(ticker, cache=cache)
+        except YahooRateLimitError as exc:
+            consecutive_rate_limits += 1
+            print(
+                f"   {ticker}: Yahoo rate limit ({consecutive_rate_limits}/"
+                f"{CATEGORY_YAHOO_MAX_CONSECUTIVE_RATE_LIMITS})."
+            )
+            if consecutive_rate_limits >= max(1, int(CATEGORY_YAHOO_MAX_CONSECUTIVE_RATE_LIMITS)):
+                print(
+                    "[CATEGORY UNIVERSE] Yahoo rate-limit circuit breaker opened. "
+                    "Stopping broad refresh and keeping existing category_universe rows intact."
+                )
+                break
+            continue
+
         if not info:
             continue
+        consecutive_rate_limits = 0
+        if source == "cache":
+            cache_hits += 1
+        elif source == "yahoo":
+            yahoo_hits += 1
+            cache_dirty = True
+            if yahoo_hits % 100 == 0:
+                save_info_cache(cache)
+                cache_dirty = False
         if infer_exchange(info) not in {"NASDAQ", "NYSE"}:
             continue
 
@@ -496,7 +636,12 @@ def build_category_universe(limit=CATEGORY_UNIVERSE_LIMIT, min_score=CATEGORY_MI
         print(f"   {ticker:<6} {best['category']:<15} {best['theme']:<28} score={best['category_score']} {best['company_name']}")
 
     records.sort(key=lambda row: (row["category_score"], row.get("market_cap") or 0), reverse=True)
-    print(f"Scan complete: {len(records)} category rows from {scanned} scanned tickers.")
+    if cache_dirty:
+        save_info_cache(cache)
+    print(
+        f"Scan complete: {len(records)} category rows from {scanned} scanned tickers "
+        f"(cache_hits={cache_hits}, yahoo_fetches={yahoo_hits})."
+    )
     upsert_records(records, dry_run=dry_run)
     return records
 
